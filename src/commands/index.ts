@@ -1,0 +1,14 @@
+export { registerInstallCommand } from './install';
+export { registerUninstallCommand } from './uninstall';
+export { registerConfigCommand } from './config';
+export { registerDiagnoseCommand } from './diagnose';
+export { registerSecurityCommand } from './security';
+export { registerAgentCommand } from './agent';
+export { registerChannelCommand } from './channel';
+export { registerUpgradeCommand } from './upgrade';
+export { registerBackupCommand } from './backup';
+export { registerMonitorCommand } from './monitor';
+export { registerTuiCommand } from './tui';
+export { registerPerfCommand } from './perf';
+export { registerKnowledgeCommand } from './knowledge';
+export { registerGuardConfigCommand } from './guard-config';
