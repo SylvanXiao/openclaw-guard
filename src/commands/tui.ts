@@ -30,12 +30,28 @@ class Dashboard {
   private table!: any;
   private running: boolean = true;
   private refreshInterval: NodeJS.Timeout | null = null;
+  private lastCpuInfo: { idle: number; total: number } | null = null;
 
   async start(): Promise<void> {
+    // 检查终端尺寸
+    const width = process.stdout.columns || 80;
+    const height = process.stdout.rows || 24;
+    
+    if (width < 80 || height < 24) {
+      console.log('\x1b[31mError: Terminal too small\x1b[0m');
+      console.log(`Current: ${width}x${height}, Minimum required: 80x24`);
+      console.log('Please resize your terminal window');
+      process.exit(1);
+    }
+
+    // 确保宽度是偶数 (blessed-contrib 要求)
+    const adjustedWidth = width % 2 === 0 ? width : width - 1;
+
     // 创建屏幕
     this.screen = blessed.screen({
       smartCSR: true,
-      title: 'OpenClaw Doctor Dashboard',
+      title: 'OpenClaw Guard Dashboard',
+      width: adjustedWidth,
     });
 
     // 创建网格布局
@@ -43,7 +59,7 @@ class Dashboard {
 
     // 标题栏
     this.statusBox = this.grid.set(0, 0, 2, 12, blessed.box, {
-      label: ' OpenClaw Doctor ',
+      label: ' OpenClaw Guard ',
       content: 'Loading...',
       tags: true,
       border: { type: 'line' },
@@ -53,42 +69,46 @@ class Dashboard {
       },
     });
 
-    // Gateway 状态仪表
-    this.gauge = this.grid.set(2, 0, 3, 4, contrib.gauge, {
-      label: 'Gateway Status',
-      percent: [0],
-      options: {
-        percentH: ['{red-fg}Offline{/red-fg}', '{green-fg}Online{/green-fg}'],
+    // Gateway 状态
+    this.gauge = this.grid.set(2, 0, 3, 4, blessed.box, {
+      label: ' Gateway Status ',
+      content: 'Checking...',
+      tags: true,
+      border: { type: 'line' },
+      style: {
+        border: { fg: 'cyan' },
+        label: { fg: 'white', bold: true },
       },
     });
 
     // 系统资源
-    this.donut = this.grid.set(2, 4, 3, 4, contrib.donut, {
-      label: 'System Resources',
-      radius: 8,
-      arcWidth: 3,
-      remainColor: 'black',
-      yPadding: 2,
-      data: [
-        { label: 'CPU', percent: 0 },
-        { label: 'MEM', percent: 0 },
-      ],
+    this.donut = this.grid.set(2, 4, 3, 4, blessed.box, {
+      label: ' System Resources ',
+      content: 'CPU: --\nMEM: --',
+      tags: true,
+      border: { type: 'line' },
+      style: {
+        border: { fg: 'cyan' },
+        label: { fg: 'white', bold: true },
+      },
     });
 
     // 智能体列表
-    this.agentsBox = this.grid.set(2, 8, 5, 4, blessed.list, {
+    this.agentsBox = this.grid.set(2, 8, 4, 4, blessed.list, {
       label: ' Agents ',
       keys: true,
       vi: true,
       mouse: true,
+      tags: true,
       style: {
         selected: { bg: 'blue' },
-        border: { fg: 'green' },
+        border: { fg: 'cyan' },
+        item: { fg: 'white' },
       },
     });
 
     // 诊断表格
-    this.table = this.grid.set(5, 0, 4, 8, contrib.table, {
+    this.table = this.grid.set(6, 0, 4, 8, contrib.table, {
       label: 'Diagnostics',
       keys: true,
       fg: 'white',
@@ -100,18 +120,20 @@ class Dashboard {
     });
 
     // 警报日志
-    this.alertsBox = this.grid.set(9, 0, 3, 6, blessed.list, {
+    this.alertsBox = this.grid.set(10, 0, 2, 6, blessed.list, {
       label: ' Recent Alerts ',
       keys: true,
       vi: true,
       mouse: true,
+      tags: true,
       style: {
         border: { fg: 'yellow' },
+        item: { fg: 'white' },
       },
     });
 
     // 操作日志
-    this.logBox = this.grid.set(9, 6, 3, 6, blessed.log, {
+    this.logBox = this.grid.set(10, 6, 2, 6, blessed.log, {
       label: ' Activity Log ',
       fg: 'green',
       selectedFg: 'green',
@@ -125,13 +147,8 @@ class Dashboard {
     });
 
     this.screen.key(['r'], () => {
-      this.logBox.log('{yellow-fg}Refreshing...{/yellow-fg}');
+      this.logBox.log('Refreshing...');
       this.refresh();
-    });
-
-    this.screen.key(['f'], () => {
-      this.logBox.log('{cyan-fg}Running auto-fix...{/cyan-fg}');
-      // 触发修复
     });
 
     // 渲染
@@ -140,13 +157,10 @@ class Dashboard {
     // 初始加载
     await this.refresh();
 
-    // 定时刷新
+    // 定时刷新 (每 3 秒)
     this.refreshInterval = setInterval(() => {
       this.refresh();
-    }, 5000);
-
-    // 开始事件循环
-    this.screen.render();
+    }, 3000);
   }
 
   private async refresh(): Promise<void> {
@@ -160,7 +174,7 @@ class Dashboard {
         this.refreshAlerts(),
       ]);
     } catch (error) {
-      this.logBox.log(`{red-fg}Error: ${error}{/red-fg}`);
+      this.logBox.log(`Error: ${error}`);
     }
     this.screen.render();
   }
@@ -170,12 +184,21 @@ class Dashboard {
     const version = await getOpenClawVersion();
     const nodeCheck = await checkNodeVersion();
 
+    const openclawStatus = installed ? `v${version} (OK)` : 'Not Installed';
+    const nodeStatus = nodeCheck.satisfied 
+      ? `${nodeCheck.installed} (OK)` 
+      : `${nodeCheck.installed} (need >= ${nodeCheck.required})`;
+
+    const uptime = os.uptime();
+    const hours = Math.floor(uptime / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+
     const status = [
-      `{bold}OpenClaw:{/bold} ${installed ? `{green-fg}v${version}{/green-fg}` : '{red-fg}Not Installed{/red-fg}'}`,
-      `{bold}Node.js:{/bold} ${nodeCheck.satisfied ? `{green-fg}${nodeCheck.installed}{/green-fg}` : `{red-fg}${nodeCheck.installed} (need >= ${nodeCheck.required}){/red-fg}`}`,
-      `{bold}Host:{/bold} ${os.hostname()}`,
-      `{bold}Platform:{/bold} ${os.type()} ${os.release()}`,
-      `{bold}Uptime:{/bold} ${Math.floor(os.uptime() / 3600)}h ${Math.floor((os.uptime() % 3600) / 60)}m`,
+      `OpenClaw: ${openclawStatus}`,
+      `Node.js:  ${nodeStatus}`,
+      `Host:     ${os.hostname()}`,
+      `Platform: ${os.type()} ${os.release()}`,
+      `Uptime:   ${hours}h ${minutes}m`,
     ].join('\n');
 
     this.statusBox.setContent(status);
@@ -183,7 +206,10 @@ class Dashboard {
 
   private async refreshGateway(): Promise<void> {
     const running = await isGatewayRunning();
-    this.gauge.setPercent(running ? 100 : 0);
+    const statusText = running 
+      ? 'Status: ONLINE\n\nGateway running on port 18789'
+      : 'Status: OFFLINE\n\nGateway not running\nRun: openclaw gateway';
+    this.gauge.setContent(statusText);
   }
 
   private async refreshResources(): Promise<void> {
@@ -193,7 +219,7 @@ class Dashboard {
     const usedMem = totalMem - freeMem;
     const memPercent = Math.round((usedMem / totalMem) * 100);
 
-    // 计算 CPU 使用率
+    // 计算 CPU 使用率（需要两次采样）
     let totalIdle = 0;
     let totalTick = 0;
     for (const cpu of cpus) {
@@ -202,12 +228,29 @@ class Dashboard {
       }
       totalIdle += cpu.times.idle;
     }
-    const cpuPercent = 100 - Math.round((totalIdle / totalTick) * 100);
 
-    this.donut.setData([
-      { label: `CPU ${cpuPercent}%`, percent: cpuPercent, color: cpuPercent > 80 ? 'red' : 'green' },
-      { label: `MEM ${memPercent}%`, percent: memPercent, color: memPercent > 80 ? 'red' : 'yellow' },
-    ]);
+    let cpuPercent = 0;
+    if (this.lastCpuInfo) {
+      const idleDiff = totalIdle - this.lastCpuInfo.idle;
+      const totalDiff = totalTick - this.lastCpuInfo.total;
+      if (totalDiff > 0) {
+        cpuPercent = Math.round(100 * (1 - idleDiff / totalDiff));
+      }
+    }
+    this.lastCpuInfo = { idle: totalIdle, total: totalTick };
+
+    const cpuBar = this.createBar(cpuPercent);
+    const memBar = this.createBar(memPercent);
+
+    this.donut.setContent(
+      `CPU: ${cpuPercent}%\n[${cpuBar}]\n\nMEM: ${memPercent}%\n[${memBar}]`
+    );
+  }
+
+  private createBar(percent: number): string {
+    const filled = Math.floor(percent / 10);
+    const empty = 10 - filled;
+    return '#'.repeat(filled) + '-'.repeat(empty);
   }
 
   private async refreshAgents(): Promise<void> {
@@ -220,13 +263,12 @@ class Dashboard {
       
       for (const agent of agents) {
         const isDefault = agent.default ? ' [default]' : '';
-        const mentions = agent.groupChat?.mentionPatterns?.join(', ') || '-';
         items.push(`${agent.id}${isDefault}`);
       }
     }
 
     if (items.length === 0) {
-      items.push('{yellow-fg}No agents configured{/yellow-fg}');
+      items.push('No agents configured');
     }
 
     this.agentsBox.setItems(items);
@@ -237,12 +279,12 @@ class Dashboard {
     const hasConfig = await configExists();
 
     // 配置检查
-    data.push(['Config File', hasConfig ? '{green-fg}OK{/green-fg}' : '{yellow-fg}Missing{/yellow-fg}', 
+    data.push(['Config File', hasConfig ? 'OK' : 'Missing', 
       hasConfig ? '~/.openclaw/openclaw.json' : 'Run: openclaw-guard config init']);
 
     // Gateway 检查
     const gatewayRunning = await isGatewayRunning();
-    data.push(['Gateway', gatewayRunning ? '{green-fg}Running{/green-fg}' : '{yellow-fg}Stopped{/yellow-fg}',
+    data.push(['Gateway', gatewayRunning ? 'Running' : 'Stopped',
       gatewayRunning ? 'Port 18789' : 'Run: openclaw gateway']);
 
     // 目录检查
@@ -250,7 +292,7 @@ class Dashboard {
     const dirs = ['logs', 'workspace', 'plugins', 'devices'];
     for (const dir of dirs) {
       const exists = await fs.pathExists(path.join(openclawDir, dir));
-      data.push([`Dir: ${dir}`, exists ? '{green-fg}OK{/green-fg}' : '{red-fg}Missing{/red-fg}', '']);
+      data.push([`Dir: ${dir}`, exists ? 'OK' : 'Missing', '']);
     }
 
     this.table.setData({
@@ -271,8 +313,8 @@ class Dashboard {
         for (const line of lines) {
           try {
             const alert = JSON.parse(line);
-            const time = new Date(alert.timestamp).toLocaleTimeString('zh-CN');
-            const icon = alert.level === 'critical' ? '🚨' : alert.level === 'high' ? '🔴' : '🟡';
+            const time = new Date(alert.timestamp).toLocaleTimeString();
+            const icon = alert.level === 'critical' ? '[!]' : alert.level === 'high' ? '[*]' : '[-]';
             items.push(`${icon} ${time} ${alert.rule?.name || 'Unknown'}`);
           } catch {
             // 忽略解析错误
@@ -284,7 +326,7 @@ class Dashboard {
     }
 
     if (items.length === 0) {
-      items.push('{green-fg}No recent alerts{/green-fg}');
+      items.push('No recent alerts');
     }
 
     this.alertsBox.setItems(items);
