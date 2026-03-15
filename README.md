@@ -312,5 +312,5 @@ MIT License
 
 ## 相关链接
 
-- [OpenClaw](https://github.com/SylvanXiao/openclaw) - AI Agent 平台
+- [OpenClaw](https://github.com/openclaw/openclaw) - AI Agent 平台
 - [问题反馈](https://github.com/SylvanXiao/openclaw-guard/issues)
