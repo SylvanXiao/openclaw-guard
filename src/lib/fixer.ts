@@ -277,22 +277,193 @@ export class AutoFixer {
     return false;
   }
 
-  private async fixWithAI(issue: any): Promise<void> {
+  private async fixWithAI(issue: any): Promise<{ suggestion: AIFixSuggestion; issue: any } | null> {
     try {
       const prompt = this.buildFixPrompt(issue);
       const suggestion = await this.callAI(prompt);
 
-      if (suggestion && suggestion.fixCommand) {
-        // 记录 AI 建议
-        this.results.push({
-          issue: `${issue.category}: ${issue.check}`,
-          action: `AI suggested: ${suggestion.explanation}`,
-          success: false,
-          message: `Fix: ${suggestion.fixCommand}\nRisk: ${suggestion.riskLevel}`,
-        });
+      if (suggestion && suggestion.fixCommand && suggestion.fixCommand !== 'N/A') {
+        // 尝试执行 AI 建议
+        const success = await this.executeAIFix(suggestion);
+        
+        if (success) {
+          this.results.push({
+            issue: `${issue.category}: ${issue.check}`,
+            action: `AI fixed: ${suggestion.explanation}`,
+            success: true,
+            message: `Fix: ${suggestion.fixCommand}`,
+          });
+
+          // 学习到知识库
+          await this.learnFromAIFix(issue, suggestion);
+
+          return { suggestion, issue };
+        } else {
+          // 高风险操作，记录建议但不执行
+          this.results.push({
+            issue: `${issue.category}: ${issue.check}`,
+            action: `AI suggested (review needed): ${suggestion.explanation}`,
+            success: false,
+            message: `Fix: ${suggestion.fixCommand}\nRisk: ${suggestion.riskLevel}`,
+          });
+        }
       }
     } catch (error) {
       // AI 修复失败，静默处理
+    }
+
+    return null;
+  }
+
+  // 从 AI 修复中学习新解决方案
+  private async learnFromAIFix(issue: any, suggestion: AIFixSuggestion): Promise<void> {
+    try {
+      // 生成问题模式
+      const problemPatterns = [
+        `${issue.check}.*${issue.status}`,
+        `${issue.category}.*${issue.check}`,
+      ];
+
+      // 检查是否已存在类似解决方案
+      const existing = this.knowledgeManager.findSolution(`${issue.category}: ${issue.check}`);
+      if (existing) {
+        // 已存在，更新成功计数
+        await this.knowledgeManager.recordResult(existing.id, true);
+        return;
+      }
+
+      // 创建临时解决方案用于安全检测
+      const tempSolution = {
+        id: `temp-${Date.now()}`,
+        name: `AI: ${issue.check}`,
+        description: suggestion.diagnosis || suggestion.explanation,
+        problemPatterns,
+        symptoms: [issue.message],
+        diagnosis: suggestion.explanation,
+        fixCommand: suggestion.fixCommand,
+        fixScript: suggestion.fixScript,
+        riskLevel: suggestion.riskLevel,
+        category: issue.category || 'other',
+        tags: ['ai-generated', issue.category, issue.check].filter(Boolean),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        successCount: 1,
+        failCount: 0,
+        source: 'ai' as const,
+        verified: false,
+      };
+
+      // 安全检测
+      const warnings = this.knowledgeManager.validateSolution(tempSolution);
+      const criticalWarnings = warnings.filter(w => w.severity === 'critical');
+
+      if (criticalWarnings.length > 0) {
+        console.log(chalk.yellow(`[Learn] Skipped "${issue.check}": ${criticalWarnings.length} critical security issues detected`));
+        for (const w of criticalWarnings) {
+          console.log(chalk.gray(`  - ${w.description}`));
+        }
+        return;
+      }
+
+      // AI 二次检测（如果启用）
+      if (this.aiEnabled && suggestion.fixCommand) {
+        const aiValidation = await this.validateFixWithAI(issue, suggestion);
+        if (!aiValidation.safe) {
+          console.log(chalk.yellow(`[Learn] AI validation rejected: ${aiValidation.reason}`));
+          return;
+        }
+      }
+
+      // 创建新解决方案
+      await this.knowledgeManager.learn({
+        name: `AI: ${issue.check}`,
+        description: suggestion.diagnosis || suggestion.explanation,
+        problemPatterns,
+        symptoms: [issue.message],
+        diagnosis: suggestion.explanation,
+        fixCommand: suggestion.fixCommand,
+        fixScript: suggestion.fixScript,
+        riskLevel: suggestion.riskLevel,
+        category: issue.category || 'other',
+        tags: ['ai-generated', issue.category, issue.check].filter(Boolean),
+        source: 'ai',
+        verified: false,
+      });
+
+      console.log(chalk.green(`[Learn] New solution learned from AI: ${issue.check}`));
+    } catch (error) {
+      // 学习失败不影响主流程
+    }
+  }
+
+  // AI 二次检测修复建议
+  private async validateFixWithAI(issue: any, suggestion: AIFixSuggestion): Promise<{ safe: boolean; reason: string }> {
+    try {
+      const prompt = `You are a security expert reviewing a fix command for safety.
+
+Context:
+- Issue: ${issue.category} - ${issue.check}
+- Message: ${issue.message}
+- Proposed fix command: ${suggestion.fixCommand}
+- Risk level: ${suggestion.riskLevel}
+
+Analyze this fix command for:
+1. Security risks (destructive operations, privilege escalation, data loss)
+2. Side effects (affects other services, modifies system config)
+3. Reversibility (can it be undone easily?)
+
+Respond in JSON format only:
+{
+  "safe": true or false,
+  "reason": "Brief explanation",
+  "risks": ["list of identified risks if any"]
+}
+
+Be conservative - if there's any doubt, mark as unsafe.`;
+
+      const response = await fetch(`${this.apiEndpoint}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.aiModel,
+          messages: [
+            { role: 'system', content: 'You are a security expert. Respond only with valid JSON.' },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.1,
+          max_tokens: 300,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!response.ok) {
+        // API 失败时默认通过（信任已有的规则检测）
+        return { safe: true, reason: 'AI validation unavailable, passed rule-based check' };
+      }
+
+      const data = await response.json() as any;
+      const content = data.choices?.[0]?.message?.content;
+      
+      if (!content) {
+        return { safe: true, reason: 'AI validation unavailable' };
+      }
+
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const result = JSON.parse(jsonMatch[0]);
+        return {
+          safe: result.safe !== false,
+          reason: result.reason || (result.safe ? 'Passed AI security check' : 'Failed AI security check'),
+        };
+      }
+
+      return { safe: true, reason: 'Could not parse AI response' };
+    } catch {
+      // AI 检测失败时默认通过（信任已有的规则检测）
+      return { safe: true, reason: 'AI validation failed, passed rule-based check' };
     }
   }
 

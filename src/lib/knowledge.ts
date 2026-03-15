@@ -29,13 +29,87 @@ export interface KnowledgeBase {
   lastUpdated: string;
 }
 
+// 安全检测警告
+export interface SecurityWarning {
+  solutionId: string;
+  solutionName: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  type: string;
+  description: string;
+  matchedPattern?: string;
+}
+
+// 危险命令模式
+const DANGEROUS_PATTERNS = [
+  // 文件系统危险操作
+  { pattern: /\brm\s+(-[rf]+\s+|)\//i, severity: 'critical' as const, type: 'destructive', description: '删除系统目录或文件' },
+  { pattern: /\brm\s+(-[rf]+\s+|)~/i, severity: 'critical' as const, type: 'destructive', description: '删除用户目录文件' },
+  { pattern: /\brm\s+(-[rf]+\s+)*\*/i, severity: 'critical' as const, type: 'destructive', description: '批量删除文件' },
+  { pattern: /\bmv\s+.*\s+\/dev\/null/i, severity: 'critical' as const, type: 'destructive', description: '丢弃文件内容' },
+  { pattern: /\bshred\b/i, severity: 'high' as const, type: 'destructive', description: '安全删除文件' },
+  { pattern: /\bdd\s+.*of=\/dev\//i, severity: 'critical' as const, type: 'destructive', description: '磁盘覆写操作' },
+
+  // 权限相关
+  { pattern: /\bchmod\s+(-R\s+)?777\b/i, severity: 'high' as const, type: 'permission', description: '设置过于开放的权限' },
+  { pattern: /\bchmod\s+(-R\s+)?a\+rwx\b/i, severity: 'high' as const, type: 'permission', description: '设置过于开放的权限' },
+  { pattern: /\bchown\s+.*\//i, severity: 'medium' as const, type: 'permission', description: '修改系统文件所有者' },
+  { pattern: /\bsudo\s+chmod/i, severity: 'medium' as const, type: 'permission', description: '使用 sudo 修改权限' },
+
+  // 网络危险操作
+  { pattern: /\bcurl\s+.*\|\s*(bash|sh|sudo)/i, severity: 'critical' as const, type: 'network', description: '从网络直接执行脚本' },
+  { pattern: /\bwget\s+.*\|\s*(bash|sh|sudo)/i, severity: 'critical' as const, type: 'network', description: '从网络直接执行脚本' },
+  { pattern: /\bcurl\s+.*>\s*\/etc\//i, severity: 'critical' as const, type: 'network', description: '下载文件到系统目录' },
+  { pattern: /\bwget\s+.*>\s*\/etc\//i, severity: 'critical' as const, type: 'network', description: '下载文件到系统目录' },
+  { pattern: /\bnc\s+.*-e\s+(\/bin\/bash|\/bin\/sh)/i, severity: 'critical' as const, type: 'network', description: '反向 shell' },
+  { pattern: /\bbash\s+.*<\/dev\/tcp\//i, severity: 'critical' as const, type: 'network', description: '网络重定向执行' },
+
+  // 系统配置
+  { pattern: />\s*\/etc\/passwd/i, severity: 'critical' as const, type: 'system', description: '修改密码文件' },
+  { pattern: />\s*\/etc\/shadow/i, severity: 'critical' as const, type: 'system', description: '修改影子密码文件' },
+  { pattern: />\s*\/etc\/sudoers/i, severity: 'critical' as const, type: 'system', description: '修改 sudo 配置' },
+  { pattern: />\s*~\/\.ssh\//i, severity: 'high' as const, type: 'system', description: '修改 SSH 配置' },
+  { pattern: /\bsed\s+.*\/etc\/passwd/i, severity: 'critical' as const, type: 'system', description: '修改密码文件' },
+
+  // 特权提升
+  { pattern: /\bsudo\s+su\b/i, severity: 'high' as const, type: 'privilege', description: '切换到 root 用户' },
+  { pattern: /\bsu\s+root\b/i, severity: 'high' as const, type: 'privilege', description: '切换到 root 用户' },
+  { pattern: /\bsu\s+-\s*$/i, severity: 'high' as const, type: 'privilege', description: '切换用户' },
+  { pattern: /\bpkexec\b/i, severity: 'medium' as const, type: 'privilege', description: '以特权执行命令' },
+
+  // 环境变量
+  { pattern: /\bexport\s+PATH\s*=/i, severity: 'medium' as const, type: 'environment', description: '修改 PATH 环境变量' },
+  { pattern: /\bexport\s+LD_PRELOAD\b/i, severity: 'critical' as const, type: 'environment', description: '预加载恶意库' },
+  { pattern: /\bexport\s+LD_LIBRARY_PATH\b/i, severity: 'medium' as const, type: 'environment', description: '修改库搜索路径' },
+
+  // 进程和服务
+  { pattern: /\bkill\s+-9\s+1\b/i, severity: 'critical' as const, type: 'process', description: '杀死 init 进程' },
+  { pattern: /\bkillall\s+/i, severity: 'medium' as const, type: 'process', description: '批量杀死进程' },
+  { pattern: /\bpkill\s+/i, severity: 'medium' as const, type: 'process', description: '批量杀死进程' },
+  { pattern: /\bsystemctl\s+(stop|disable)\s+/i, severity: 'medium' as const, type: 'process', description: '停止或禁用服务' },
+
+  // 隐藏执行
+  { pattern: /\bnohup\s+.*&/i, severity: 'low' as const, type: 'hidden', description: '后台隐藏执行' },
+  { pattern: /\bsetsid\s+/i, severity: 'low' as const, type: 'hidden', description: '新会话执行' },
+  { pattern: /\bdisown\b/i, severity: 'low' as const, type: 'hidden', description: '脱离终端执行' },
+
+  // 脚本执行
+  { pattern: /\beval\s+['\"]/i, severity: 'medium' as const, type: 'execution', description: '执行字符串命令' },
+  { pattern: /\bexec\s+<\(/i, severity: 'medium' as const, type: 'execution', description: '进程替换执行' },
+  { pattern: /\bsource\s+.*\/tmp\//i, severity: 'medium' as const, type: 'execution', description: '从临时目录执行脚本' },
+];
+
 export class KnowledgeManager {
   private knowledgePath: string;
   private knowledge: KnowledgeBase;
+  private configPath: string;
+  private remoteUrl: string = '';
+  private autoSyncInterval: number = 0; // 小时，0 表示禁用
 
   constructor() {
     const openclawDir = path.join(os.homedir(), '.openclaw');
+    const guardDir = path.join(os.homedir(), '.openclaw-guard');
     this.knowledgePath = path.join(openclawDir, 'guard-knowledge.json');
+    this.configPath = path.join(guardDir, 'knowledge-config.json');
     this.knowledge = {
       version: '1.0.0',
       solutions: [],
@@ -44,6 +118,7 @@ export class KnowledgeManager {
   }
 
   async initialize(): Promise<void> {
+    await this.loadConfig();
     await this.load();
     
     // 合并内置知识
@@ -58,6 +133,452 @@ export class KnowledgeManager {
     } catch {
       // 加载失败，使用默认
     }
+  }
+
+  // 加载知识库配置
+  private async loadConfig(): Promise<void> {
+    try {
+      if (await fs.pathExists(this.configPath)) {
+        const config = await fs.readJson(this.configPath);
+        this.remoteUrl = config.remoteUrl || '';
+        this.autoSyncInterval = config.autoSyncInterval || 0;
+      }
+    } catch {
+      // 配置加载失败
+    }
+  }
+
+  // 保存知识库配置
+  private async saveConfig(): Promise<void> {
+    try {
+      await fs.ensureDir(path.dirname(this.configPath));
+      await fs.writeJson(this.configPath, {
+        remoteUrl: this.remoteUrl,
+        autoSyncInterval: this.autoSyncInterval,
+        lastSync: new Date().toISOString(),
+      }, { spaces: 2 });
+    } catch (error) {
+      console.error('Failed to save knowledge config:', error);
+    }
+  }
+
+  // 设置远程知识库 URL
+  setRemoteUrl(url: string): void {
+    this.remoteUrl = url;
+    this.saveConfig();
+  }
+
+  // 获取远程知识库 URL
+  getRemoteUrl(): string {
+    return this.remoteUrl;
+  }
+
+  // 设置自动同步间隔（小时）
+  setAutoSyncInterval(hours: number): void {
+    this.autoSyncInterval = hours;
+    this.saveConfig();
+  }
+
+  // 获取自动同步间隔
+  getAutoSyncInterval(): number {
+    return this.autoSyncInterval;
+  }
+
+  // 安全检测：验证单个解决方案
+  validateSolution(solution: Solution): SecurityWarning[] {
+    const warnings: SecurityWarning[] = [];
+    
+    const checkCommand = (command: string, context: 'fixCommand' | 'fixScript') => {
+      for (const { pattern, severity, type, description } of DANGEROUS_PATTERNS) {
+        if (pattern.test(command)) {
+          warnings.push({
+            solutionId: solution.id,
+            solutionName: solution.name,
+            severity,
+            type,
+            description: `${context === 'fixCommand' ? 'Fix command' : 'Fix script'}: ${description}`,
+            matchedPattern: pattern.source,
+          });
+        }
+      }
+    };
+
+    // 检查修复命令
+    if (solution.fixCommand) {
+      checkCommand(solution.fixCommand, 'fixCommand');
+    }
+
+    // 检查修复脚本
+    if (solution.fixScript) {
+      checkCommand(solution.fixScript, 'fixScript');
+    }
+
+    return warnings;
+  }
+
+  // 安全检测：验证整个知识库
+  validateKnowledgeBase(kb: KnowledgeBase): { 
+    valid: boolean; 
+    warnings: SecurityWarning[]; 
+    criticalCount: number;
+    highCount: number;
+  } {
+    const warnings: SecurityWarning[] = [];
+    
+    for (const solution of kb.solutions) {
+      const solutionWarnings = this.validateSolution(solution);
+      warnings.push(...solutionWarnings);
+    }
+
+    const criticalCount = warnings.filter(w => w.severity === 'critical').length;
+    const highCount = warnings.filter(w => w.severity === 'high').length;
+
+    // 有 critical 级别警告则认为不安全
+    return {
+      valid: criticalCount === 0,
+      warnings,
+      criticalCount,
+      highCount,
+    };
+  }
+
+  // 打印安全警告
+  printSecurityWarnings(warnings: SecurityWarning[]): void {
+    if (warnings.length === 0) {
+      console.log(chalk.green('✓ No security issues detected'));
+      return;
+    }
+
+    const severityColors = {
+      critical: chalk.red.bold,
+      high: chalk.red,
+      medium: chalk.yellow,
+      low: chalk.gray,
+    };
+
+    const severityIcons = {
+      critical: '🚨',
+      high: '🔴',
+      medium: '🟡',
+      low: '🔵',
+    };
+
+    // 按严重程度分组
+    const grouped = warnings.reduce((acc, w) => {
+      if (!acc[w.severity]) acc[w.severity] = [];
+      acc[w.severity].push(w);
+      return acc;
+    }, {} as Record<string, SecurityWarning[]>);
+
+    console.log(chalk.yellow(`\n⚠️  Security Warnings (${warnings.length})\n`));
+
+    for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+      const items = grouped[severity];
+      if (!items || items.length === 0) continue;
+
+      const color = severityColors[severity];
+      const icon = severityIcons[severity];
+
+      console.log(color(`${icon} ${severity.toUpperCase()} (${items.length})`));
+      
+      for (const warning of items) {
+        console.log(chalk.gray(`  [${warning.solutionId}] ${warning.solutionName}`));
+        console.log(chalk.gray(`    Type: ${warning.type}`));
+        console.log(chalk.gray(`    Issue: ${warning.description}`));
+      }
+      console.log();
+    }
+  }
+
+  // 从远程同步知识库（只拉取 successCount >= 3 且 verified: true 的）
+  async syncFromRemote(): Promise<{ success: boolean; added: number; updated: number; skipped: number; message: string }> {
+    if (!this.remoteUrl) {
+      return { success: false, added: 0, updated: 0, skipped: 0, message: 'No remote URL configured' };
+    }
+
+    try {
+      console.log(chalk.gray(`[Sync] Fetching from: ${this.remoteUrl}`));
+      
+      const response = await fetch(this.remoteUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'openclaw-guard/1.0',
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!response.ok) {
+        return { success: false, added: 0, updated: 0, skipped: 0, message: `HTTP ${response.status}: ${response.statusText}` };
+      }
+
+      const remoteData = await response.json() as KnowledgeBase;
+      
+      if (!remoteData.solutions || !Array.isArray(remoteData.solutions)) {
+        return { success: false, added: 0, updated: 0, skipped: 0, message: 'Invalid knowledge base format' };
+      }
+
+      // 安全检测
+      console.log(chalk.gray('[Sync] Running security validation...'));
+      const validation = this.validateKnowledgeBase(remoteData);
+      
+      if (!validation.valid) {
+        console.log(chalk.red(`[Sync] Security validation failed: ${validation.criticalCount} critical issues found`));
+        this.printSecurityWarnings(validation.warnings);
+        return { 
+          success: false, 
+          added: 0, 
+          updated: 0, 
+          skipped: 0, 
+          message: `Security validation failed: ${validation.criticalCount} critical issues detected` 
+        };
+      }
+
+      if (validation.warnings.length > 0) {
+        console.log(chalk.yellow(`[Sync] Security warnings: ${validation.highCount} high, ${validation.warnings.length - validation.criticalCount - validation.highCount} medium/low`));
+      } else {
+        console.log(chalk.green('[Sync] Security validation passed'));
+      }
+
+      let added = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      for (const remoteSolution of remoteData.solutions) {
+        // 只拉取成功次数 >= 3 且已验证的方案
+        if (!remoteSolution.verified || remoteSolution.successCount < 3) {
+          skipped++;
+          continue;
+        }
+
+        const existing = this.knowledge.solutions.find(s => s.id === remoteSolution.id);
+        
+        if (!existing) {
+          // 新解决方案，添加
+          this.knowledge.solutions.push(remoteSolution);
+          added++;
+        } else {
+          // 已存在，累加成功次数（取最大值）
+          existing.successCount = Math.max(existing.successCount, remoteSolution.successCount);
+          existing.failCount = Math.max(existing.failCount, remoteSolution.failCount);
+          
+          // 检查是否需要更新其他字段
+          const remoteDate = new Date(remoteSolution.updatedAt).getTime();
+          const localDate = new Date(existing.updatedAt).getTime();
+          
+          if (remoteDate > localDate) {
+            // 远程更新，保留本地的成功/失败计数（已处理）
+            const successCount = existing.successCount;
+            const failCount = existing.failCount;
+            
+            Object.assign(existing, remoteSolution, {
+              successCount,
+              failCount,
+            });
+          }
+          updated++;
+        }
+      }
+
+      // 更新版本号
+      if (remoteData.version) {
+        this.knowledge.version = remoteData.version;
+      }
+
+      await this.save();
+      await this.saveConfig();
+
+      console.log(chalk.green(`[Sync] Added ${added}, Updated ${updated}, Skipped ${skipped} (unverified) solutions`));
+      
+      return { success: true, added, updated, skipped, message: `Synced successfully` };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      return { success: false, added: 0, updated: 0, skipped: 0, message: `Sync failed: ${errorMsg}` };
+    }
+  }
+
+  // 检查是否需要自动同步
+  async checkAutoSync(): Promise<boolean> {
+    if (this.autoSyncInterval <= 0 || !this.remoteUrl) {
+      return false;
+    }
+
+    try {
+      const config = await fs.readJson(this.configPath);
+      const lastSync = config.lastSync ? new Date(config.lastSync) : new Date(0);
+      const hoursSinceSync = (Date.now() - lastSync.getTime()) / (1000 * 60 * 60);
+      
+      if (hoursSinceSync >= this.autoSyncInterval) {
+        console.log(chalk.gray(`[AutoSync] ${hoursSinceSync.toFixed(1)} hours since last sync, syncing...`));
+        const result = await this.syncFromRemote();
+        return result.success;
+      }
+    } catch {
+      // 配置不存在或无效，执行首次同步
+      const result = await this.syncFromRemote();
+      return result.success;
+    }
+
+    return false;
+  }
+
+  // 同步本地验证过的解决方案到远程
+  // - 只同步 verified: true 的（成功 1 次即可）
+  // - 安全检测不通过的过滤掉
+  // - 与远程匹配：相同的累加次数，不同的新建
+  async syncToRemote(remoteUrl?: string): Promise<{ success: boolean; count: number; merged: number; created: number; skipped: number; message: string }> {
+    const url = remoteUrl || this.remoteUrl;
+    
+    if (!url) {
+      return { success: false, count: 0, merged: 0, created: 0, skipped: 0, message: 'No remote URL configured' };
+    }
+
+    // 只同步已验证的解决方案（成功 1 次即可，verified: true）
+    const localVerifiedSolutions = this.knowledge.solutions.filter(s => s.verified);
+
+    if (localVerifiedSolutions.length === 0) {
+      return { success: false, count: 0, merged: 0, created: 0, skipped: 0, message: 'No verified solutions to sync' };
+    }
+
+    // 安全检测过滤
+    console.log(chalk.gray(`[Sync] Running security validation on ${localVerifiedSolutions.length} solutions...`));
+    const safeSolutions: Solution[] = [];
+    let securitySkipped = 0;
+
+    for (const solution of localVerifiedSolutions) {
+      const warnings = this.validateSolution(solution);
+      const criticalWarnings = warnings.filter(w => w.severity === 'critical');
+      
+      if (criticalWarnings.length === 0) {
+        safeSolutions.push(solution);
+      } else {
+        securitySkipped++;
+        console.log(chalk.yellow(`[Sync] Skipped "${solution.name}": ${criticalWarnings.length} critical security issues`));
+      }
+    }
+
+    if (safeSolutions.length === 0) {
+      return { success: false, count: 0, merged: 0, created: 0, skipped: securitySkipped, message: 'No safe solutions to sync (all failed security check)' };
+    }
+
+    console.log(chalk.gray(`[Sync] ${safeSolutions.length} solutions passed security check, ${securitySkipped} skipped`));
+
+    try {
+      console.log(chalk.gray(`[Sync] Pushing ${safeSolutions.length} safe solutions to: ${url}`));
+
+      // 1. 先获取远程知识库
+      let remoteSolutions: Solution[] = [];
+      try {
+        const fetchResponse = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'openclaw-guard/1.0',
+          },
+          signal: AbortSignal.timeout(30000),
+        });
+
+        if (fetchResponse.ok) {
+          const remoteData = await fetchResponse.json() as KnowledgeBase;
+          remoteSolutions = remoteData.solutions || [];
+          console.log(chalk.gray(`[Sync] Found ${remoteSolutions.length} existing solutions on remote`));
+        }
+      } catch {
+        // 远程获取失败，可能是首次推送
+        console.log(chalk.gray(`[Sync] No existing remote data, will create new knowledge base`));
+      }
+
+      // 2. 合并逻辑：匹配相同的累加次数，不同的新建
+      let merged = 0;
+      let created = 0;
+
+      for (const localSolution of safeSolutions) {
+        // 尝试通过 ID 匹配
+        let matchedRemote = remoteSolutions.find(s => s.id === localSolution.id);
+
+        // 如果 ID 不匹配，尝试通过问题模式匹配
+        if (!matchedRemote && localSolution.problemPatterns.length > 0) {
+          matchedRemote = remoteSolutions.find(s => {
+            // 检查是否有重叠的问题模式
+            const localPatterns = new Set(localSolution.problemPatterns.map(p => p.toLowerCase()));
+            const remotePatterns = new Set(s.problemPatterns.map(p => p.toLowerCase()));
+            
+            // 至少有一个模式相同
+            for (const pattern of localPatterns) {
+              if (remotePatterns.has(pattern)) return true;
+            }
+            return false;
+          });
+        }
+
+        if (matchedRemote) {
+          // 找到匹配，累加成功次数
+          matchedRemote.successCount += localSolution.successCount;
+          matchedRemote.failCount += localSolution.failCount;
+          matchedRemote.updatedAt = new Date();
+          
+          // 确保已验证
+          if (!matchedRemote.verified && matchedRemote.successCount >= 3) {
+            matchedRemote.verified = true;
+          }
+          
+          merged++;
+        } else {
+          // 没有匹配，新建
+          remoteSolutions.push({
+            ...localSolution,
+            updatedAt: new Date(),
+          });
+          created++;
+        }
+      }
+
+      // 3. 推送合并后的知识库
+      const payload: KnowledgeBase = {
+        version: this.knowledge.version,
+        solutions: remoteSolutions,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'openclaw-guard/1.0',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!response.ok) {
+        return { success: false, count: 0, merged: 0, created: 0, skipped: securitySkipped, message: `HTTP ${response.status}: ${response.statusText}` };
+      }
+
+      await this.saveConfig();
+
+      console.log(chalk.green(`[Sync] Pushed successfully: ${merged} merged, ${created} created, ${securitySkipped} skipped (security)`));
+
+      return { success: true, count: safeSolutions.length, merged, created, skipped: securitySkipped, message: 'Pushed successfully' };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      return { success: false, count: 0, merged: 0, created: 0, skipped: 0, message: `Push failed: ${errorMsg}` };
+    }
+  }
+
+  // 导出已验证的解决方案（用于分享/备份）
+  async exportVerified(outputPath: string): Promise<number> {
+    const verifiedSolutions = this.knowledge.solutions.filter(s => s.verified);
+
+    const payload: KnowledgeBase = {
+      version: this.knowledge.version,
+      solutions: verifiedSolutions,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    await fs.writeJson(outputPath, payload, { spaces: 2 });
+    console.log(chalk.green(`✓ Exported ${verifiedSolutions.length} verified solutions to: ${outputPath}`));
+
+    return verifiedSolutions.length;
   }
 
   private async save(): Promise<void> {
@@ -296,8 +817,19 @@ export class KnowledgeManager {
         problemPatterns: ['duplicate plugin id', 'plugin.*overridden'],
         symptoms: ['Config warnings 显示 duplicate plugin', '插件行为异常'],
         diagnosis: '检查 openclaw.plugins.entries 和 extensions 目录',
-        fixCommand: '删除重复的扩展: rm -rf ~/.openclaw/extensions/<plugin-name>',
-        riskLevel: 'low',
+        fixScript: `#!/bin/bash
+# 删除重复的扩展目录
+EXT_DIR="$HOME/.openclaw/extensions"
+PLUGIN_NAME="<plugin-name>"
+
+if [ -d "$EXT_DIR/$PLUGIN_NAME" ]; then
+  echo "Removing duplicate plugin: $PLUGIN_NAME"
+  rm -rf "$EXT_DIR/$PLUGIN_NAME"
+  echo "Done. Please restart OpenClaw."
+else
+  echo "Plugin directory not found: $EXT_DIR/$PLUGIN_NAME"
+fi`,
+        riskLevel: 'medium',
         category: 'plugin',
         tags: ['plugin', 'duplicate', 'config'],
         createdAt: new Date(),
@@ -458,8 +990,29 @@ export class KnowledgeManager {
   }
 
   // 导入知识库
-  async import(inputPath: string): Promise<number> {
+  async import(inputPath: string, skipSecurityCheck: boolean = false): Promise<{ count: number; warnings: SecurityWarning[] }> {
     const imported = await fs.readJson(inputPath);
+    
+    // 安全检测
+    let warnings: SecurityWarning[] = [];
+    if (!skipSecurityCheck) {
+      console.log(chalk.gray('[Import] Running security validation...'));
+      const validation = this.validateKnowledgeBase(imported);
+      warnings = validation.warnings;
+      
+      if (!validation.valid) {
+        console.log(chalk.red(`[Import] Security validation failed: ${validation.criticalCount} critical issues found`));
+        this.printSecurityWarnings(validation.warnings);
+        return { count: 0, warnings };
+      }
+
+      if (validation.warnings.length > 0) {
+        console.log(chalk.yellow(`[Import] Security warnings: ${validation.highCount} high, ${validation.warnings.length - validation.criticalCount - validation.highCount} medium/low`));
+      } else {
+        console.log(chalk.green('[Import] Security validation passed'));
+      }
+    }
+
     let count = 0;
 
     for (const solution of imported.solutions || []) {
@@ -475,7 +1028,7 @@ export class KnowledgeManager {
 
     await this.save();
     console.log(chalk.green(`✓ Imported ${count} new solutions`));
-    return count;
+    return { count, warnings };
   }
 
   // 打印知识库统计

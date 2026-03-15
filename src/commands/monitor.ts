@@ -7,6 +7,7 @@ import os from 'os';
 import { DangerDetector, AlertSystem, LogMonitor, DANGER_RULES, RiskLevel, NetworkMonitor, DeviceMonitor } from '../monitor';
 import { AuthorizationManager } from '../monitor/authorization';
 import { DaemonManager } from '../lib/daemon';
+import { KnowledgeManager } from '../lib/knowledge';
 
 export function registerMonitorCommand(program: Command) {
   const monitorCmd = program.command('monitor').description('Real-time security monitoring');
@@ -119,6 +120,11 @@ export function registerMonitorCommand(program: Command) {
         process.exit(0);
       });
 
+      // 检查知识库自动同步
+      const knowledgeManager = new KnowledgeManager();
+      await knowledgeManager.initialize();
+      await knowledgeManager.checkAutoSync();
+
       await logMonitor.start();
       if (networkMonitor) await networkMonitor.start();
       if (deviceMonitor) await deviceMonitor.start();
@@ -148,6 +154,8 @@ export function registerMonitorCommand(program: Command) {
     .option('--network', 'Enable network connection monitoring')
     .option('--ports <ports...>', 'Gateway ports to monitor', ['18789'])
     .option('--devices', 'Enable device pairing monitoring')
+    .option('--knowledge-sync-url <url>', 'Remote knowledge base URL for auto-sync')
+    .option('--knowledge-sync-interval <hours>', 'Auto-sync interval in hours', parseFloat)
     .action(async (options) => {
       console.log(chalk.blue('🛡️  Starting OpenClaw Security Monitor (Daemon)'));
       console.log();
@@ -165,6 +173,8 @@ export function registerMonitorCommand(program: Command) {
         feishu: options.feishu,
         includeAuthorized: options.includeAuthorized || false,
         rules: options.rules,
+        knowledgeSyncUrl: options.knowledgeSyncUrl,
+        knowledgeSyncInterval: options.knowledgeSyncInterval,
       };
 
       const result = await daemon.start(config);
@@ -176,6 +186,9 @@ export function registerMonitorCommand(program: Command) {
         console.log(`  Level: ${config.level}`);
         if (config.network) console.log('  Network monitoring: enabled');
         if (config.devices) console.log('  Device monitoring: enabled');
+        if (config.knowledgeSyncUrl) {
+          console.log(`  Knowledge sync: ${config.knowledgeSyncInterval || 24}h interval from ${config.knowledgeSyncUrl}`);
+        }
         console.log();
         console.log('Commands:');
         console.log(`  ${chalk.gray('openclaw-guard monitor stop')}     - Stop daemon`);

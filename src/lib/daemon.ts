@@ -19,6 +19,9 @@ export interface DaemonConfig {
   feishu?: string;
   includeAuthorized: boolean;
   rules?: string[];
+  // 知识库自动同步
+  knowledgeSyncUrl?: string;
+  knowledgeSyncInterval?: number; // 小时
 }
 
 export class DaemonManager {
@@ -131,6 +134,14 @@ export class DaemonManager {
 
     if (config.rules && config.rules.length > 0) {
       args.push('--rules', ...config.rules);
+    }
+
+    if (config.knowledgeSyncUrl) {
+      args.push('--knowledge-sync-url', config.knowledgeSyncUrl);
+    }
+
+    if (config.knowledgeSyncInterval) {
+      args.push('--knowledge-sync-interval', config.knowledgeSyncInterval.toString());
     }
 
     // 使用 nohup 启动后台进程
