@@ -4,7 +4,7 @@ import * as contrib from 'blessed-contrib';
 import os from 'os';
 import fs from 'fs-extra';
 import path from 'path';
-import execa = require('execa');
+import chalk from 'chalk';
 import { isOpenClawInstalled, getOpenClawVersion, isGatewayRunning, checkNodeVersion } from '../lib/system';
 import { configExists, loadConfig, getOpenClawDir } from '../lib/config';
 
@@ -25,120 +25,157 @@ class Dashboard {
   private statusBox!: blessed.Widgets.BoxElement;
   private agentsBox!: blessed.Widgets.ListElement;
   private alertsBox!: blessed.Widgets.ListElement;
-  private gauge!: any;
-  private donut!: any;
+  private gatewayBox!: blessed.Widgets.BoxElement;
+  private resourceBox!: blessed.Widgets.BoxElement;
   private table!: any;
   private running: boolean = true;
   private refreshInterval: NodeJS.Timeout | null = null;
   private lastCpuInfo: { idle: number; total: number } | null = null;
 
   async start(): Promise<void> {
-    // 检查终端尺寸
     const width = process.stdout.columns || 80;
     const height = process.stdout.rows || 24;
     
-    if (width < 80 || height < 24) {
-      console.log('\x1b[31mError: Terminal too small\x1b[0m');
-      console.log(`Current: ${width}x${height}, Minimum required: 80x24`);
+    if (width < 100 || height < 28) {
+      console.log(chalk.red('Error: Terminal too small'));
+      console.log(`Current: ${width}x${height}, Minimum required: 100x28`);
       console.log('Please resize your terminal window');
       process.exit(1);
     }
 
-    // 确保宽度是偶数 (blessed-contrib 要求)
     const adjustedWidth = width % 2 === 0 ? width : width - 1;
 
-    // 创建屏幕
     this.screen = blessed.screen({
       smartCSR: true,
       title: 'OpenClaw Guard Dashboard',
       width: adjustedWidth,
+      fullUnicode: true,
     });
 
-    // 创建网格布局
     this.grid = new contrib.grid({ rows: 12, cols: 12, screen: this.screen });
 
-    // 标题栏
+    // 顶部状态栏 - 跨越整行
     this.statusBox = this.grid.set(0, 0, 2, 12, blessed.box, {
-      label: ' OpenClaw Guard ',
+      label: ' OpenClaw Guard Dashboard ',
       content: 'Loading...',
       tags: true,
       border: { type: 'line' },
       style: {
         border: { fg: 'cyan' },
         label: { fg: 'white', bold: true },
+        bg: 'black',
       },
     });
 
-    // Gateway 状态
-    this.gauge = this.grid.set(2, 0, 3, 4, blessed.box, {
-      label: ' Gateway Status ',
+    // Gateway 状态 - 左侧
+    this.gatewayBox = this.grid.set(2, 0, 2, 4, blessed.box, {
+      label: ' Gateway ',
       content: 'Checking...',
       tags: true,
       border: { type: 'line' },
+      padding: { left: 1, right: 1 },
       style: {
         border: { fg: 'cyan' },
         label: { fg: 'white', bold: true },
       },
     });
 
-    // 系统资源
-    this.donut = this.grid.set(2, 4, 3, 4, blessed.box, {
+    // 系统资源 - 中间
+    this.resourceBox = this.grid.set(2, 4, 2, 4, blessed.box, {
       label: ' System Resources ',
       content: 'CPU: --\nMEM: --',
       tags: true,
       border: { type: 'line' },
+      padding: { left: 1, right: 1 },
       style: {
         border: { fg: 'cyan' },
         label: { fg: 'white', bold: true },
       },
     });
 
-    // 智能体列表
-    this.agentsBox = this.grid.set(2, 8, 4, 4, blessed.list, {
+    // Agents - 右侧
+    this.agentsBox = this.grid.set(2, 8, 2, 4, blessed.list, {
       label: ' Agents ',
       keys: true,
       vi: true,
       mouse: true,
       tags: true,
+      border: { type: 'line' },
       style: {
-        selected: { bg: 'blue' },
         border: { fg: 'cyan' },
+        label: { fg: 'white', bold: true },
+        selected: { bg: 'blue', fg: 'white' },
         item: { fg: 'white' },
       },
     });
 
-    // 诊断表格
-    this.table = this.grid.set(6, 0, 4, 8, contrib.table, {
-      label: 'Diagnostics',
+    // 诊断表格 - 主体区域
+    this.table = this.grid.set(4, 0, 5, 8, contrib.table, {
+      label: ' Diagnostics ',
       keys: true,
       fg: 'white',
       selectedFg: 'white',
       selectedBg: 'blue',
       interactive: true,
-      columnSpacing: 2,
-      columnWidth: [20, 10, 40],
+      columnSpacing: 3,
+      columnWidth: [18, 12, 45],
+      border: { type: 'line' },
+      style: {
+        border: { fg: 'cyan' },
+        label: { fg: 'white', bold: true },
+      },
     });
 
-    // 警报日志
-    this.alertsBox = this.grid.set(10, 0, 2, 6, blessed.list, {
+    // 知识库统计 - 右侧
+    const knowledgeBox = this.grid.set(4, 8, 5, 4, blessed.box, {
+      label: ' Knowledge Base ',
+      content: 'Loading...',
+      tags: true,
+      border: { type: 'line' },
+      padding: { left: 1, right: 1 },
+      style: {
+        border: { fg: 'cyan' },
+        label: { fg: 'white', bold: true },
+      },
+    });
+
+    // 警报日志 - 左下
+    this.alertsBox = this.grid.set(9, 0, 3, 6, blessed.list, {
       label: ' Recent Alerts ',
       keys: true,
       vi: true,
       mouse: true,
       tags: true,
+      border: { type: 'line' },
       style: {
         border: { fg: 'yellow' },
+        label: { fg: 'yellow', bold: true },
+        selected: { bg: 'yellow', fg: 'black' },
         item: { fg: 'white' },
       },
     });
 
-    // 操作日志
-    this.logBox = this.grid.set(10, 6, 2, 6, blessed.log, {
+    // 操作日志 - 右下
+    this.logBox = this.grid.set(9, 6, 3, 6, blessed.log, {
       label: ' Activity Log ',
-      fg: 'green',
-      selectedFg: 'green',
+      fg: 'white',
+      selectedFg: 'white',
       tags: true,
-      border: { type: 'line', fg: 'cyan' },
+      border: { type: 'line' },
+      style: {
+        border: { fg: 'green' },
+        label: { fg: 'green', bold: true },
+      },
+    });
+
+    // 底部快捷键提示
+    const helpBox = this.grid.set(12, 0, 0, 12, blessed.box, {
+      content: ' {cyan-fg}[R]{/cyan-fg} Refresh  {cyan-fg}[Q]{/cyan-fg} Quit',
+      tags: true,
+      height: 1,
+      style: {
+        bg: 'black',
+      },
     });
 
     // 键盘事件
@@ -147,17 +184,16 @@ class Dashboard {
     });
 
     this.screen.key(['r'], () => {
-      this.logBox.log('Refreshing...');
+      this.logBox.log('{green-fg}>>> Refreshing...{/green-fg}');
       this.refresh();
     });
 
-    // 渲染
     this.screen.render();
 
     // 初始加载
     await this.refresh();
 
-    // 定时刷新 (每 3 秒)
+    // 定时刷新
     this.refreshInterval = setInterval(() => {
       this.refresh();
     }, 3000);
@@ -172,9 +208,10 @@ class Dashboard {
         this.refreshAgents(),
         this.refreshDiagnostics(),
         this.refreshAlerts(),
+        this.refreshKnowledge(),
       ]);
     } catch (error) {
-      this.logBox.log(`Error: ${error}`);
+      this.logBox.log(`{red-fg}Error: ${error}{/red-fg}`);
     }
     this.screen.render();
   }
@@ -184,21 +221,19 @@ class Dashboard {
     const version = await getOpenClawVersion();
     const nodeCheck = await checkNodeVersion();
 
-    const openclawStatus = installed ? `v${version} (OK)` : 'Not Installed';
-    const nodeStatus = nodeCheck.satisfied 
-      ? `${nodeCheck.installed} (OK)` 
-      : `${nodeCheck.installed} (need >= ${nodeCheck.required})`;
+    const openclawIcon = installed ? '{green-fg}●{/green-fg}' : '{red-fg}○{/red-fg}';
+    const nodeIcon = nodeCheck.satisfied ? '{green-fg}●{/green-fg}' : '{red-fg}○{/red-fg}';
 
     const uptime = os.uptime();
     const hours = Math.floor(uptime / 3600);
     const minutes = Math.floor((uptime % 3600) / 60);
 
     const status = [
-      `OpenClaw: ${openclawStatus}`,
-      `Node.js:  ${nodeStatus}`,
-      `Host:     ${os.hostname()}`,
-      `Platform: ${os.type()} ${os.release()}`,
-      `Uptime:   ${hours}h ${minutes}m`,
+      `  ${openclawIcon} OpenClaw: ${installed ? `{bold}v${version}{/bold}` : 'Not Installed'}`,
+      `  ${nodeIcon} Node.js:  ${nodeCheck.satisfied ? nodeCheck.installed : `${nodeCheck.installed} (need >= ${nodeCheck.required})`}`,
+      `  {cyan-fg}➜{/cyan-fg} Host: ${os.hostname()}`,
+      `  {cyan-fg}➜{/cyan-fg} Platform: ${os.type()} ${os.release()}`,
+      `  {cyan-fg}➜{/cyan-fg} Uptime: ${hours}h ${minutes}m`,
     ].join('\n');
 
     this.statusBox.setContent(status);
@@ -206,10 +241,13 @@ class Dashboard {
 
   private async refreshGateway(): Promise<void> {
     const running = await isGatewayRunning();
-    const statusText = running 
-      ? 'Status: ONLINE\n\nGateway running on port 18789'
-      : 'Status: OFFLINE\n\nGateway not running\nRun: openclaw gateway';
-    this.gauge.setContent(statusText);
+    
+    const content = running 
+      ? '{green-fg}● ONLINE{/green-fg}\n  Port: 18789'
+      : '{red-fg}○ OFFLINE{/red-fg}\n  Run: openclaw gateway';
+    
+    this.gatewayBox.setContent(content);
+    this.gatewayBox.style.border.fg = running ? 'green' : 'red';
   }
 
   private async refreshResources(): Promise<void> {
@@ -219,7 +257,6 @@ class Dashboard {
     const usedMem = totalMem - freeMem;
     const memPercent = Math.round((usedMem / totalMem) * 100);
 
-    // 计算 CPU 使用率（需要两次采样）
     let totalIdle = 0;
     let totalTick = 0;
     for (const cpu of cpus) {
@@ -239,18 +276,24 @@ class Dashboard {
     }
     this.lastCpuInfo = { idle: totalIdle, total: totalTick };
 
-    const cpuBar = this.createBar(cpuPercent);
-    const memBar = this.createBar(memPercent);
+    const cpuBar = this.createProgressBar(cpuPercent, 20);
+    const memBar = this.createProgressBar(memPercent, 20);
 
-    this.donut.setContent(
-      `CPU: ${cpuPercent}%\n[${cpuBar}]\n\nMEM: ${memPercent}%\n[${memBar}]`
-    );
+    const cpuColor = cpuPercent > 80 ? 'red' : cpuPercent > 50 ? 'yellow' : 'green';
+    const memColor = memPercent > 80 ? 'red' : memPercent > 50 ? 'yellow' : 'green';
+
+    const content = [
+      `{${cpuColor}-fg}CPU{/} ${cpuPercent.toString().padStart(3)}%  ${cpuBar}`,
+      `{${memColor}-fg}MEM{/} ${memPercent.toString().padStart(3)}%  ${memBar}`,
+    ].join('\n');
+
+    this.resourceBox.setContent(content);
   }
 
-  private createBar(percent: number): string {
-    const filled = Math.floor(percent / 10);
-    const empty = 10 - filled;
-    return '#'.repeat(filled) + '-'.repeat(empty);
+  private createProgressBar(percent: number, width: number): string {
+    const filled = Math.round((percent / 100) * width);
+    const empty = width - filled;
+    return '█'.repeat(filled) + '░'.repeat(empty);
   }
 
   private async refreshAgents(): Promise<void> {
@@ -262,13 +305,13 @@ class Dashboard {
       const agents = config?.agents?.list || [];
       
       for (const agent of agents) {
-        const isDefault = agent.default ? ' [default]' : '';
-        items.push(`${agent.id}${isDefault}`);
+        const icon = agent.default ? '{green-fg}●{/green-fg}' : '○';
+        items.push(`${icon} ${agent.id}`);
       }
     }
 
     if (items.length === 0) {
-      items.push('No agents configured');
+      items.push('{gray-fg}No agents configured{/gray-fg}');
     }
 
     this.agentsBox.setItems(items);
@@ -278,21 +321,21 @@ class Dashboard {
     const data: string[][] = [];
     const hasConfig = await configExists();
 
-    // 配置检查
+    const configIcon = hasConfig ? '{green-fg}✓{/green-fg}' : '{red-fg}✗{/red-fg}';
     data.push(['Config File', hasConfig ? 'OK' : 'Missing', 
       hasConfig ? '~/.openclaw/openclaw.json' : 'Run: openclaw-guard config init']);
 
-    // Gateway 检查
     const gatewayRunning = await isGatewayRunning();
+    const gatewayIcon = gatewayRunning ? '{green-fg}✓{/green-fg}' : '{yellow-fg}○{/yellow-fg}';
     data.push(['Gateway', gatewayRunning ? 'Running' : 'Stopped',
       gatewayRunning ? 'Port 18789' : 'Run: openclaw gateway']);
 
-    // 目录检查
     const openclawDir = getOpenClawDir();
     const dirs = ['logs', 'workspace', 'plugins', 'devices'];
     for (const dir of dirs) {
       const exists = await fs.pathExists(path.join(openclawDir, dir));
-      data.push([`Dir: ${dir}`, exists ? 'OK' : 'Missing', '']);
+      const icon = exists ? '{green-fg}✓{/green-fg}' : '{red-fg}✗{/red-fg}';
+      data.push([`${icon} ${dir}`, exists ? 'OK' : 'Missing', '']);
     }
 
     this.table.setData({
@@ -314,22 +357,67 @@ class Dashboard {
           try {
             const alert = JSON.parse(line);
             const time = new Date(alert.timestamp).toLocaleTimeString();
-            const icon = alert.level === 'critical' ? '[!]' : alert.level === 'high' ? '[*]' : '[-]';
+            const icon = alert.level === 'critical' ? '{red-fg}[!]{/red-fg}' 
+                       : alert.level === 'high' ? '{yellow-fg}[*]{/yellow-fg}' 
+                       : '[-]';
             items.push(`${icon} ${time} ${alert.rule?.name || 'Unknown'}`);
           } catch {
-            // 忽略解析错误
+            // ignore
           }
         }
       } catch {
-        // 忽略读取错误
+        // ignore
       }
     }
 
     if (items.length === 0) {
-      items.push('No recent alerts');
+      items.push('{gray-fg}No recent alerts - System secure{/gray-fg}');
     }
 
     this.alertsBox.setItems(items);
+  }
+
+  private async refreshKnowledge(): Promise<void> {
+    const knowledgePath = path.join(os.homedir(), '.openclaw', 'guard-knowledge.json');
+    let total = 0;
+    let verified = 0;
+    let successRate = '0%';
+
+    if (await fs.pathExists(knowledgePath)) {
+      try {
+        const data = await fs.readJson(knowledgePath);
+        total = data.solutions?.length || 0;
+        verified = data.solutions?.filter((s: any) => s.verified).length || 0;
+        
+        const totalSuccess = data.solutions?.reduce((sum: number, s: any) => sum + (s.successCount || 0), 0) || 0;
+        const totalFail = data.solutions?.reduce((sum: number, s: any) => sum + (s.failCount || 0), 0) || 0;
+        
+        if (totalSuccess + totalFail > 0) {
+          successRate = Math.round((totalSuccess / (totalSuccess + totalFail)) * 100) + '%';
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const content = [
+      `{cyan-fg}Solutions:{/cyan-fg}     ${total}`,
+      `{green-fg}Verified:{/green-fg}      ${verified}`,
+      `{yellow-fg}Success Rate:{/yellow-fg} ${successRate}`,
+      '',
+      '{gray-fg}Commands:{/gray-fg}',
+      '  knowledge list',
+      '  knowledge sync',
+    ].join('\n');
+
+    // 找到知识库面板并更新
+    const knowledgeBox = this.screen.children.find((c: any) => 
+      c.options?.label === ' Knowledge Base '
+    ) as blessed.Widgets.BoxElement;
+    
+    if (knowledgeBox) {
+      knowledgeBox.setContent(content);
+    }
   }
 
   stop(): void {
