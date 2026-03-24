@@ -25,11 +25,59 @@ export async function loadConfig(): Promise<OpenClawConfig | null> {
   }
   try {
     const content = await fs.readFile(configPath, 'utf-8');
+    
     // 支持 JSON5 格式（允许注释和尾随逗号）
-    const jsonContent = content
-      .replace(/\/\*[\s\S]*?\*\//g, '') // 移除块注释
-      .replace(/\/\/.*$/gm, '') // 移除行注释
-      .replace(/,\s*([}\]])/g, '$1'); // 移除尾随逗号
+    // 需要正确处理字符串中的 // 而不会误删
+    
+    // 1. 移除块注释 /* ... */
+    let jsonContent = content.replace(/\/\*[\s\S]*?\*\//g, '');
+    
+    // 2. 移除行注释 // ... （但要避免误删字符串中的 //）
+    // 通过状态机来区分字符串内外的 //
+    let inString = false;
+    let stringChar = '';
+    let result = '';
+    
+    for (let i = 0; i < jsonContent.length; i++) {
+      const char = jsonContent[i];
+      const nextChar = jsonContent[i + 1];
+      
+      if (!inString) {
+        // 不在字符串中
+        if (char === '"' || char === "'") {
+          // 进入字符串
+          inString = true;
+          stringChar = char;
+          result += char;
+        } else if (char === '/' && nextChar === '/') {
+          // 找到行注释，跳过直到行尾
+          while (i < jsonContent.length && jsonContent[i] !== '\n') {
+            i++;
+          }
+          // 保留换行符
+          if (i < jsonContent.length) {
+            result += jsonContent[i];
+          }
+        } else {
+          result += char;
+        }
+      } else {
+        // 在字符串中
+        if (char === stringChar) {
+          // 检查是否是转义的引号
+          if (jsonContent[i - 1] !== '\\') {
+            inString = false;
+          }
+        }
+        result += char;
+      }
+    }
+    
+    jsonContent = result;
+    
+    // 3. 移除尾随逗号
+    jsonContent = jsonContent.replace(/,\s*([}\]])/g, '$1');
+    
     return JSON.parse(jsonContent);
   } catch (error) {
     return null;

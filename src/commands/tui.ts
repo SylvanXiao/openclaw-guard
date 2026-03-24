@@ -11,7 +11,21 @@ import { configExists, loadConfig, getOpenClawDir } from '../lib/config';
 // 国际化支持
 const isEnglish = () => {
   const lang = process.env.LANG || process.env.LC_ALL || process.env.LC_MESSAGES || '';
-  return lang.toLowerCase().startsWith('en') || lang.toLowerCase().includes('english');
+  const langLower = lang.toLowerCase();
+  
+  // 明确检测英文环境
+  if (langLower.startsWith('en') || langLower.includes('english')) {
+    return true;
+  }
+  
+  // 检测中文环境
+  if (langLower.includes('zh') || langLower.includes('cn') || langLower.includes('chinese')) {
+    return false;
+  }
+  
+  // 对于 C.UTF-8 等通用环境，默认显示中文
+  // 或者可以进一步检测系统语言
+  return false; // 默认显示中文
 };
 
 const i18n = {
@@ -308,7 +322,7 @@ class Dashboard {
         name: t('cmdSecurity'),
         description: 'Run security audit and hardening',
         action: async () => {
-          await this.executeCommand('security');
+          await this.executeCommand('security', ['audit']);
         },
       },
       {
@@ -357,7 +371,7 @@ class Dashboard {
         name: t('cmdPerf'),
         description: 'View performance metrics',
         action: async () => {
-          await this.executeCommand('perf');
+          await this.executeCommand('perf', ['status']);
         },
       },
       {
