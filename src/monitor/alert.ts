@@ -20,6 +20,20 @@ export interface AlertConfig {
     webhook: string;
     secret?: string;
   };
+  slack?: {
+    webhook: string;
+    channel?: string;
+    username?: string;
+  };
+  discord?: {
+    webhook: string;
+    username?: string;
+    avatarUrl?: string;
+  };
+  telegram?: {
+    botToken: string;
+    chatId: string;
+  };
   email?: {
     host: string;
     port: number;
@@ -57,6 +71,9 @@ export class AlertSystem {
       dingtalk: config.dingtalk,
       wecom: config.wecom,
       feishu: config.feishu,
+      slack: config.slack,
+      discord: config.discord,
+      telegram: config.telegram,
       email: config.email,
       skipAuthorized: config.skipAuthorized ?? true,
     };
@@ -117,6 +134,18 @@ export class AlertSystem {
 
       if (this.config.feishu) {
         promises.push(this.alertFeishu(record));
+      }
+
+      if (this.config.slack) {
+        promises.push(this.alertSlack(record));
+      }
+
+      if (this.config.discord) {
+        promises.push(this.alertDiscord(record));
+      }
+
+      if (this.config.telegram) {
+        promises.push(this.alertTelegram(record));
       }
 
       if (this.config.email) {
@@ -366,6 +395,169 @@ export class AlertSystem {
       });
     } catch (error) {
       console.error('Feishu alert error:', error);
+    }
+  }
+
+  private async alertSlack(record: AlertRecord): Promise<void> {
+    if (!this.config.slack) return;
+
+    try {
+      const icon = this.getLevelIcon(record.level);
+      const color = record.level === 'critical' ? '#ff0000' :
+                    record.level === 'high' ? '#ff6600' :
+                    record.level === 'medium' ? '#ffcc00' : '#36a64f';
+
+      const blocks = [
+        {
+          type: 'header',
+          text: {
+            type: 'plain_text',
+            text: `${icon} OpenClaw 安全警报`,
+            emoji: true,
+          },
+        },
+        {
+          type: 'section',
+          fields: [
+            {
+              type: 'mrkdwn',
+              text: `*等级:*\n${record.level.toUpperCase()}`,
+            },
+            {
+              type: 'mrkdwn',
+              text: `*规则:*\n${record.ruleName}`,
+            },
+          ],
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*匹配内容:*\n\`${record.matched.substring(0, 100)}${record.matched.length > 100 ? '...' : ''}\``,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            {
+              type: 'mrkdwn',
+              text: `⏰ ${record.timestamp.toLocaleString('zh-CN')}`,
+            },
+          ],
+        },
+      ];
+
+      const body: any = {
+        attachments: [{
+          color,
+          blocks,
+          fallback: `${icon} [${record.level.toUpperCase()}] ${record.ruleName}: ${record.matched}`,
+        }],
+      };
+
+      if (this.config.slack.channel) {
+        body.channel = this.config.slack.channel;
+      }
+      if (this.config.slack.username) {
+        body.username = this.config.slack.username;
+      }
+
+      await fetch(this.config.slack.webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      console.error('Slack alert error:', error);
+    }
+  }
+
+  private async alertDiscord(record: AlertRecord): Promise<void> {
+    if (!this.config.discord) return;
+
+    try {
+      const icon = this.getLevelIcon(record.level);
+      const color = record.level === 'critical' ? 15548997 :  // red
+                    record.level === 'high' ? 15105570 :       // orange
+                    record.level === 'medium' ? 16776960 : 5763719; // yellow : green
+
+      const embed = {
+        title: `${icon} OpenClaw 安全警报`,
+        description: `**${record.ruleName}**`,
+        color,
+        fields: [
+          {
+            name: '等级',
+            value: record.level.toUpperCase(),
+            inline: true,
+          },
+          {
+            name: '规则 ID',
+            value: record.ruleId,
+            inline: true,
+          },
+          {
+            name: '匹配内容',
+            value: `\`${record.matched.substring(0, 100)}${record.matched.length > 100 ? '...' : ''}\``,
+            inline: false,
+          },
+        ],
+        timestamp: record.timestamp.toISOString(),
+        footer: {
+          text: 'OpenClaw Guard',
+        },
+      };
+
+      const body: any = {
+        embeds: [embed],
+      };
+
+      if (this.config.discord.username) {
+        body.username = this.config.discord.username;
+      }
+      if (this.config.discord.avatarUrl) {
+        body.avatar_url = this.config.discord.avatarUrl;
+      }
+
+      await fetch(this.config.discord.webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      console.error('Discord alert error:', error);
+    }
+  }
+
+  private async alertTelegram(record: AlertRecord): Promise<void> {
+    if (!this.config.telegram) return;
+
+    try {
+      const icon = this.getLevelIcon(record.level);
+      const escapeHtml = (str: string) => 
+        str.replace(/&/g, '&amp;')
+           .replace(/</g, '&lt;')
+           .replace(/>/g, '&gt;');
+
+      const text = `${icon} <b>OpenClaw 安全警报</b>\n\n` +
+        `<b>等级:</b> ${record.level.toUpperCase()}\n` +
+        `<b>规则:</b> ${escapeHtml(record.ruleName)}\n` +
+        `<b>匹配:</b> <code>${escapeHtml(record.matched.substring(0, 100))}${record.matched.length > 100 ? '...' : ''}</code>\n` +
+        `<b>时间:</b> ${record.timestamp.toLocaleString('zh-CN')}`;
+
+      const url = `https://api.telegram.org/bot${this.config.telegram.botToken}/sendMessage`;
+      
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: this.config.telegram.chatId,
+          text,
+          parse_mode: 'HTML',
+        }),
+      });
+    } catch (error) {
+      console.error('Telegram alert error:', error);
     }
   }
 

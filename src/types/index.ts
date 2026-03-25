@@ -100,3 +100,32 @@ export interface OpenClawConfig {
     entries?: Record<string, { enabled?: boolean }>;
   };
 }
+
+// 新增类型定义
+export interface CVERecord {
+  cveId: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  cvssScore: number;
+  title: string;
+  description: string;
+  fixedVersions: string[];
+  affected: boolean;
+}
+
+export interface ComplianceResult {
+  ruleId: string;
+  name: string;
+  passed: boolean;
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+  message: string;
+  remediation?: string;
+}
+
+export interface InjectionDetectionResult {
+  patternId: string;
+  name: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  matched: string;
+  context: string;
+  confidence: number;
+}

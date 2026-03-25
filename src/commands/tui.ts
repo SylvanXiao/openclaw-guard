@@ -7,97 +7,82 @@ import path from 'path';
 import chalk from 'chalk';
 import { isOpenClawInstalled, getOpenClawVersion, isGatewayRunning, checkNodeVersion } from '../lib/system';
 import { configExists, loadConfig, getOpenClawDir } from '../lib/config';
+import { cveDatabase } from '../lib/cve-database';
+import { complianceChecker } from '../lib/compliance';
 
 // 国际化支持
 const isEnglish = () => {
   const lang = process.env.LANG || process.env.LC_ALL || process.env.LC_MESSAGES || '';
   const langLower = lang.toLowerCase();
   
-  // 明确检测英文环境
   if (langLower.startsWith('en') || langLower.includes('english')) {
     return true;
   }
   
-  // 检测中文环境
   if (langLower.includes('zh') || langLower.includes('cn') || langLower.includes('chinese')) {
     return false;
   }
   
-  // 对于 C.UTF-8 等通用环境，默认显示中文
-  // 或者可以进一步检测系统语言
-  return false; // 默认显示中文
+  return false;
 };
 
 const i18n = {
-  // 面板标签
-  dashboard: { en: 'OpenClaw Guard Dashboard', zh: 'OpenClaw Guard 仪表盘' },
+  dashboard: { en: 'OpenClaw Guard', zh: 'OpenClaw Guard' },
   gateway: { en: 'Gateway', zh: '网关' },
-  systemResources: { en: 'System Resources', zh: '系统资源' },
+  systemResources: { en: 'Resources', zh: '资源' },
   agents: { en: 'Agents', zh: '智能体' },
-  diagnostics: { en: 'Diagnostics', zh: '诊断' },
-  alerts: { en: 'Alerts', zh: '警报' },
-  commands: { en: 'Commands', zh: '命令' },
+  diagnostics: { en: 'Diagnostics', zh: '系统诊断' },
+  alerts: { en: 'Alerts', zh: '安全警报' },
+  commands: { en: 'Commands', zh: '快捷命令' },
   activityLog: { en: 'Activity Log', zh: '活动日志' },
+  security: { en: 'Security', zh: '安全状态' },
   
-  // 状态文本
   loading: { en: 'Loading...', zh: '加载中...' },
-  checking: { en: 'Checking...', zh: '检测中...' },
   online: { en: 'ONLINE', zh: '在线' },
   offline: { en: 'OFFLINE', zh: '离线' },
-  unknown: { en: 'UNKNOWN', zh: '未知' },
   running: { en: 'Running', zh: '运行中' },
   stopped: { en: 'Stopped', zh: '已停止' },
   ok: { en: 'OK', zh: '正常' },
   missing: { en: 'Missing', zh: '缺失' },
   
-  // OpenClaw 状态
   notInstalled: { en: 'Not Installed', zh: '未安装' },
   configNotFound: { en: 'Config not found', zh: '配置未找到' },
-  noAgentsConfigured: { en: 'No agents configured', zh: '未配置智能体' },
-  noRecentAlerts: { en: 'No recent alerts - System secure', zh: '暂无警报 - 系统安全' },
+  noAgentsConfigured: { en: 'No agents configured', zh: '暂无智能体配置' },
+  noRecentAlerts: { en: '✓ No alerts - System secure', zh: '✓ 系统安全 - 暂无警报' },
   
-  // 提示信息
-  runCommand: { en: 'Run:', zh: '运行:' },
   pressEnter: { en: 'Press ENTER to return to dashboard...', zh: '按回车键返回仪表盘...' },
   terminalTooSmall: { en: 'Error: Terminal too small', zh: '错误: 终端窗口太小' },
   currentSize: { en: 'Current', zh: '当前' },
-  minimumRequired: { en: 'Minimum required: 100x28', zh: '最小要求: 100x28' },
+  minimumRequired: { en: 'Minimum required: 120x30', zh: '最小要求: 120x30' },
   pleaseResize: { en: 'Please resize your terminal window', zh: '请调整终端窗口大小' },
   
-  // 命令名称
-  cmdDiagnose: { en: '📊 Diagnose System', zh: '📊 系统诊断' },
+  cmdDiagnose: { en: '🔍 Diagnose', zh: '🔍 系统诊断' },
+  cmdCveScan: { en: '🛡️ CVE Scan', zh: '🛡️ CVE扫描' },
   cmdSecurity: { en: '🔒 Security Audit', zh: '🔒 安全审计' },
-  cmdShowConfig: { en: '📋 Show Config', zh: '📋 查看配置' },
-  cmdInitConfig: { en: '🔧 Init Config', zh: '🔧 初始化配置' },
-  cmdInstall: { en: '📦 Install OpenClaw', zh: '📦 安装 OpenClaw' },
-  cmdUpgrade: { en: '🔄 Upgrade OpenClaw', zh: '🔄 升级 OpenClaw' },
-  cmdBackup: { en: '💾 List Backups', zh: '💾 备份列表' },
-  cmdAgents: { en: '🤖 List Agents', zh: '🤖 智能体列表' },
-  cmdPerf: { en: '📈 Performance Monitor', zh: '📈 性能监控' },
-  cmdKnowledge: { en: '📚 Knowledge Base', zh: '📚 知识库' },
-  cmdChannels: { en: '📡 List Channels', zh: '📡 渠道列表' },
+  cmdCompliance: { en: '📋 Compliance', zh: '📋 合规检查' },
+  cmdInjection: { en: '💉 Injection Test', zh: '💉 注入检测' },
+  cmdShowConfig: { en: '⚙️ Config', zh: '⚙️ 查看配置' },
+  cmdInstall: { en: '📦 Install', zh: '📦 安装' },
+  cmdUpgrade: { en: '⬆️ Upgrade', zh: '⬆️ 升级' },
+  cmdBackup: { en: '💾 Backup', zh: '💾 备份' },
+  cmdAgents: { en: '🤖 Agents', zh: '🤖 智能体' },
+  cmdPerf: { en: '📈 Performance', zh: '📈 性能' },
+  cmdKnowledge: { en: '📚 Knowledge', zh: '📚 知识库' },
   cmdExit: { en: '🚪 Exit', zh: '🚪 退出' },
   
-  // 智能体信息
   defaultAgent: { en: '[DEFAULT]', zh: '[默认]' },
   ws: { en: 'WS', zh: '工作区' },
   model: { en: 'Model', zh: '模型' },
   bindings: { en: 'Bindings', zh: '绑定' },
-  mentions: { en: 'Mentions', zh: '提及' },
   
-  // 快捷键提示
-  keyRefresh: { en: '[R] Refresh', zh: '[R] 刷新' },
-  keyCommands: { en: '[C] Commands', zh: '[C] 命令' },
-  keySwitch: { en: '[Tab] Switch Panel', zh: '[Tab] 切换面板' },
-  keyQuit: { en: '[Q] Quit', zh: '[Q] 退出' },
-  
-  // 其他
-  host: { en: 'Host', zh: '主机' },
-  platform: { en: 'Platform', zh: '平台' },
-  uptime: { en: 'Uptime', zh: '运行时间' },
-  config: { en: 'Config', zh: '配置' },
-  file: { en: 'File', zh: '文件' },
-  port: { en: 'Port', zh: '端口' },
+  cve: { en: 'CVE', zh: 'CVE漏洞' },
+  compliance: { en: 'Compliance', zh: '合规得分' },
+  score: { en: '', zh: '分' },
+  vulnerabilities: { en: 'vulnerabilities', zh: '个漏洞' },
+  critical: { en: 'Critical', zh: '严重' },
+  high: { en: 'High', zh: '高危' },
+  exploited: { en: 'Exploited', zh: '已利用' },
+  noVulns: { en: '✓ No vulnerabilities', zh: '✓ 无已知漏洞' },
 };
 
 const t = (key: keyof typeof i18n): string => {
@@ -120,11 +105,24 @@ interface CommandItem {
   action: () => Promise<void>;
 }
 
+// 颜色主题
+const THEME = {
+  primary: 'cyan',
+  success: 'green',
+  warning: 'yellow',
+  danger: 'red',
+  info: 'blue',
+  muted: 'gray',
+  accent: 'magenta',
+};
+
 class Dashboard {
   private screen!: blessed.Widgets.Screen;
   private grid!: any;
   private logBox!: blessed.Widgets.Log;
   private statusBox!: blessed.Widgets.BoxElement;
+  private resourceBox!: blessed.Widgets.BoxElement;
+  private securityBox!: blessed.Widgets.BoxElement;
   private agentsBox!: blessed.Widgets.ListElement;
   private alertsBox!: blessed.Widgets.ListElement;
   private commandBox!: blessed.Widgets.ListElement;
@@ -134,104 +132,159 @@ class Dashboard {
   private lastCpuInfo: { idle: number; total: number } | null = null;
   private commands: CommandItem[] = [];
   private paused: boolean = false;
+  private lastCveResult: any = null;
+  private lastComplianceScore: number | null = null;
+  private cpuHistory: number[] = [];
+  private memHistory: number[] = [];
 
   async start(): Promise<void> {
     const width = process.stdout.columns || 80;
     const height = process.stdout.rows || 24;
     
-    if (width < 100 || height < 28) {
+    if (width < 120 || height < 30) {
       console.log(chalk.red(t('terminalTooSmall')));
       console.log(`${t('currentSize')}: ${width}x${height}, ${t('minimumRequired')}`);
       console.log(t('pleaseResize'));
       process.exit(1);
     }
 
-    const adjustedWidth = width % 2 === 0 ? width : width - 1;
-
     this.screen = blessed.screen({
       smartCSR: true,
-      title: t('dashboard'),
-      width: adjustedWidth,
+      title: `OpenClaw Guard Dashboard`,
       fullUnicode: true,
     });
 
-    this.grid = new contrib.grid({ rows: 12, cols: 12, screen: this.screen });
+    this.grid = new contrib.grid({ rows: 14, cols: 14, screen: this.screen });
 
-    // 顶部状态栏 - 跨越整行（包含 Gateway 和系统资源）
-    this.statusBox = this.grid.set(0, 0, 3, 12, blessed.box, {
-      label: ` ${t('dashboard')} `,
-      content: t('loading'),
+    // ═══════════════════════════════════════════════════════════
+    // 顶部标题栏 - 全宽
+    // ═══════════════════════════════════════════════════════════
+    this.statusBox = this.grid.set(0, 0, 2, 14, blessed.box, {
       tags: true,
       border: { type: 'line' },
       style: {
-        border: { fg: 'cyan' },
+        border: { fg: THEME.primary },
+        bg: 'black',
+      },
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // 第二行：资源监控 | 安全状态
+    // ═══════════════════════════════════════════════════════════
+    this.resourceBox = this.grid.set(2, 0, 3, 7, blessed.box, {
+      label: ` 📊 ${t('systemResources')} `,
+      tags: true,
+      border: { type: 'line' },
+      style: {
+        border: { fg: THEME.primary },
         label: { fg: 'white', bold: true },
         bg: 'black',
       },
     });
 
-    // Agents 详情面板 - 右侧
-    this.agentsBox = this.grid.set(2, 8, 5, 4, blessed.list, {
-      label: ` ${t('agents')} `,
+    this.securityBox = this.grid.set(2, 7, 3, 7, blessed.box, {
+      label: ` 🛡️ ${t('security')} `,
+      tags: true,
+      border: { type: 'line' },
+      style: {
+        border: { fg: THEME.warning },
+        label: { fg: THEME.warning, bold: true },
+        bg: 'black',
+      },
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // 第三行：智能体 | 诊断表格
+    // ═══════════════════════════════════════════════════════════
+    this.agentsBox = this.grid.set(5, 0, 4, 4, blessed.list, {
+      label: ` 🤖 ${t('agents')} `,
       keys: true,
       vi: true,
       mouse: true,
       tags: true,
       border: { type: 'line' },
       style: {
-        border: { fg: 'cyan' },
-        label: { fg: 'white', bold: true },
-        selected: { bg: 'blue', fg: 'white' },
+        border: { fg: THEME.accent },
+        label: { fg: THEME.accent, bold: true },
+        selected: { bg: THEME.accent, fg: 'white', bold: true },
         item: { fg: 'white' },
+        bg: 'black',
       },
     });
 
-    // 诊断表格 - 主体区域
-    this.table = this.grid.set(2, 0, 5, 8, contrib.table, {
-      label: ` ${t('diagnostics')} `,
+    this.table = this.grid.set(5, 4, 4, 10, contrib.table, {
+      label: ` 🔧 ${t('diagnostics')} `,
       keys: true,
       fg: 'white',
       selectedFg: 'white',
-      selectedBg: 'blue',
+      selectedBg: THEME.info,
       interactive: true,
-      columnSpacing: 3,
-      columnWidth: [18, 12, 45],
+      columnSpacing: 4,
+      columnWidth: [20, 14, 50],
       border: { type: 'line' },
       style: {
-        border: { fg: 'cyan' },
+        border: { fg: THEME.primary },
         label: { fg: 'white', bold: true },
+        bg: 'black',
       },
     });
 
-    // 警报日志 - 左下
-    this.alertsBox = this.grid.set(7, 0, 3, 4, blessed.list, {
-      label: ` ${t('alerts')} `,
+    // ═══════════════════════════════════════════════════════════
+    // 第四行：警报 | 命令 | 日志
+    // ═══════════════════════════════════════════════════════════
+    this.alertsBox = this.grid.set(9, 0, 3, 5, blessed.list, {
+      label: ` 🚨 ${t('alerts')} `,
       keys: true,
       vi: true,
       mouse: true,
       tags: true,
       border: { type: 'line' },
       style: {
-        border: { fg: 'yellow' },
-        label: { fg: 'yellow', bold: true },
-        selected: { bg: 'yellow', fg: 'black' },
+        border: { fg: THEME.danger },
+        label: { fg: THEME.danger, bold: true },
+        selected: { bg: THEME.danger, fg: 'white', bold: true },
         item: { fg: 'white' },
+        bg: 'black',
       },
     });
 
-    // 命令菜单 - 中下
-    this.commandBox = this.grid.set(7, 4, 3, 4, blessed.list, {
-      label: ` ${t('commands')} `,
+    this.commandBox = this.grid.set(9, 5, 3, 4, blessed.list, {
+      label: ` ⌨️ ${t('commands')} `,
       keys: true,
       vi: true,
       mouse: true,
       tags: true,
       border: { type: 'line' },
       style: {
-        border: { fg: 'magenta' },
-        label: { fg: 'magenta', bold: true },
-        selected: { bg: 'magenta', fg: 'white' },
+        border: { fg: THEME.accent },
+        label: { fg: THEME.accent, bold: true },
+        selected: { bg: THEME.accent, fg: 'white', bold: true },
         item: { fg: 'white' },
+        bg: 'black',
+      },
+    });
+
+    this.logBox = this.grid.set(9, 9, 3, 5, blessed.log, {
+      label: ` 📝 ${t('activityLog')} `,
+      fg: 'white',
+      tags: true,
+      border: { type: 'line' },
+      style: {
+        border: { fg: THEME.success },
+        label: { fg: THEME.success, bold: true },
+        bg: 'black',
+      },
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // 底部快捷键提示栏
+    // ═══════════════════════════════════════════════════════════
+    const helpBox = this.grid.set(12, 0, 2, 14, blessed.box, {
+      tags: true,
+      border: { type: 'line' },
+      style: {
+        border: { fg: THEME.muted },
+        bg: 'black',
       },
     });
 
@@ -242,36 +295,13 @@ class Dashboard {
     this.commandBox.on('select', async (item: any, index: number) => {
       if (index >= 0 && index < this.commands.length) {
         const cmd = this.commands[index];
-        this.logBox.log(`{magenta-fg}>>> ${isEnglish() ? 'Executing' : '执行'}: ${cmd.name}{/magenta-fg}`);
+        this.logBox.log(`{${THEME.accent}-fg}▶ ${isEnglish() ? 'Executing' : '执行'}: ${cmd.name}{/${THEME.accent}-fg}`);
         try {
           await cmd.action();
         } catch (error) {
-          this.logBox.log(`{red-fg}${isEnglish() ? 'Error' : '错误'}: ${error}{/red-fg}`);
+          this.logBox.log(`{${THEME.danger}-fg}✗ ${isEnglish() ? 'Error' : '错误'}: ${error}{/${THEME.danger}-fg}`);
         }
       }
-    });
-
-    // 操作日志 - 右下
-    this.logBox = this.grid.set(7, 8, 3, 4, blessed.log, {
-      label: ` ${t('activityLog')} `,
-      fg: 'white',
-      selectedFg: 'white',
-      tags: true,
-      border: { type: 'line' },
-      style: {
-        border: { fg: 'green' },
-        label: { fg: 'green', bold: true },
-      },
-    });
-
-    // 底部快捷键提示
-    const helpBox = this.grid.set(10, 0, 2, 12, blessed.box, {
-      content: ` {cyan-fg}${t('keyRefresh')}{/cyan-fg}  {cyan-fg}${t('keyCommands')}{/cyan-fg}  {cyan-fg}${t('keySwitch')}{/cyan-fg}  {cyan-fg}${t('keyQuit')}{/cyan-fg}`,
-      tags: true,
-      height: 1,
-      style: {
-        bg: 'black',
-      },
     });
 
     // 键盘事件
@@ -280,17 +310,28 @@ class Dashboard {
     });
 
     this.screen.key(['r'], () => {
-      this.logBox.log(`{green-fg}>>> ${isEnglish() ? 'Refreshing...' : '刷新中...'}{/green-fg}`);
+      this.logBox.log(`{${THEME.success}-fg}⟳ ${isEnglish() ? 'Refreshing...' : '刷新中...'}{/${THEME.success}-fg}`);
       this.refresh();
     });
 
     this.screen.key(['c'], () => {
       this.commandBox.focus();
-      this.logBox.log(`{cyan-fg}>>> ${isEnglish() ? 'Focus on Commands panel' : '切换到命令面板'}{/cyan-fg}`);
+      this.logBox.log(`{${THEME.info}-fg}→ ${isEnglish() ? 'Focus on Commands' : '切换到命令面板'}{/${THEME.info}-fg}`);
+    });
+
+    this.screen.key(['s'], async () => {
+      await this.executeCommand('security', ['audit', '--cve', '--compliance']);
+    });
+
+    this.screen.key(['v'], async () => {
+      await this.executeCommand('security', ['cve', '--detail']);
+    });
+
+    this.screen.key(['d'], async () => {
+      await this.executeCommand('diagnose');
     });
 
     this.screen.key(['tab'], () => {
-      // 在各面板间循环切换焦点
       const panels = [this.agentsBox, this.alertsBox, this.commandBox];
       const currentFocus = this.screen.focused;
       const currentIndex = panels.findIndex(p => p === currentFocus);
@@ -298,141 +339,85 @@ class Dashboard {
       panels[nextIndex].focus();
     });
 
+    // 鼠标事件
+    this.screen.on('element click', (el: any) => {
+      if (el === this.statusBox || el === this.resourceBox || el === this.securityBox) {
+        this.refresh();
+      }
+    });
+
     this.screen.render();
 
     // 初始加载
     await this.refresh();
 
+    // 更新快捷键提示
+    this.updateHelpBar(helpBox);
+
     // 定时刷新
     this.refreshInterval = setInterval(() => {
       this.refresh();
-    }, 3000);
+    }, 2000);
+  }
+
+  private updateHelpBar(helpBox: blessed.Widgets.BoxElement): void {
+    const keyStyle = `{white-fg}{black-bg}`;
+    const resetStyle = `{/}`;
+    
+    const helpContent = [
+      `  ${keyStyle} R ${resetStyle} 刷新  ${keyStyle} S ${resetStyle} 安全审计  ${keyStyle} V ${resetStyle} CVE扫描  ${keyStyle} D ${resetStyle} 诊断  ${keyStyle} C ${resetStyle} 命令  ${keyStyle} Tab ${resetStyle} 切换面板  ${keyStyle} Q ${resetStyle} 退出`,
+      `  ${'{cyan-fg}'}版本: 1.0.0 │ OpenClaw 安全监控运维工具 │ {yellow-fg}https://github.com/SylvanXiao/openclaw-guard{/}`,
+    ].join('\n');
+    
+    helpBox.setContent(helpContent);
   }
 
   private initCommands(): void {
     this.commands = [
-      {
-        name: t('cmdDiagnose'),
-        description: 'Run comprehensive diagnostics',
-        action: async () => {
-          await this.executeCommand('diagnose');
-        },
-      },
-      {
-        name: t('cmdSecurity'),
-        description: 'Run security audit and hardening',
-        action: async () => {
-          await this.executeCommand('security', ['audit']);
-        },
-      },
-      {
-        name: t('cmdShowConfig'),
-        description: 'Validate current configuration',
-        action: async () => {
-          await this.executeCommand('config', ['validate']);
-        },
-      },
-      {
-        name: t('cmdInitConfig'),
-        description: 'Initialize configuration wizard',
-        action: async () => {
-          await this.executeCommand('config', ['init']);
-        },
-      },
-      {
-        name: t('cmdInstall'),
-        description: 'Install OpenClaw with guided setup',
-        action: async () => {
-          await this.executeCommand('install');
-        },
-      },
-      {
-        name: t('cmdUpgrade'),
-        description: 'Upgrade to the latest version',
-        action: async () => {
-          await this.executeCommand('upgrade');
-        },
-      },
-      {
-        name: t('cmdBackup'),
-        description: 'List all configuration backups',
-        action: async () => {
-          await this.executeCommand('backup', ['list']);
-        },
-      },
-      {
-        name: t('cmdAgents'),
-        description: 'List all configured agents',
-        action: async () => {
-          await this.executeCommand('agent', ['list']);
-        },
-      },
-      {
-        name: t('cmdPerf'),
-        description: 'View performance metrics',
-        action: async () => {
-          await this.executeCommand('perf', ['status']);
-        },
-      },
-      {
-        name: t('cmdKnowledge'),
-        description: 'List solutions in knowledge base',
-        action: async () => {
-          await this.executeCommand('knowledge', ['list']);
-        },
-      },
-      {
-        name: t('cmdChannels'),
-        description: 'List configured channels',
-        action: async () => {
-          await this.executeCommand('channel', ['list']);
-        },
-      },
-      {
-        name: t('cmdExit'),
-        description: 'Exit the dashboard',
-        action: async () => {
-          this.stop();
-        },
-      },
+      { name: t('cmdDiagnose'), description: 'Run diagnostics', action: async () => { await this.executeCommand('diagnose'); } },
+      { name: t('cmdCveScan'), description: 'Scan CVE', action: async () => { await this.executeCommand('security', ['cve', '--detail']); } },
+      { name: t('cmdSecurity'), description: 'Security audit', action: async () => { await this.executeCommand('security', ['audit', '--cve', '--compliance']); } },
+      { name: t('cmdCompliance'), description: 'Compliance check', action: async () => { await this.executeCommand('security', ['compliance']); } },
+      { name: t('cmdInjection'), description: 'Injection test', action: async () => { await this.executeCommand('security', ['injection']); } },
+      { name: t('cmdShowConfig'), description: 'Show config', action: async () => { await this.executeCommand('config', ['show']); } },
+      { name: t('cmdBackup'), description: 'Backup', action: async () => { await this.executeCommand('backup', ['list']); } },
+      { name: t('cmdAgents'), description: 'Agents', action: async () => { await this.executeCommand('agent', ['list']); } },
+      { name: t('cmdKnowledge'), description: 'Knowledge', action: async () => { await this.executeCommand('knowledge', ['list']); } },
+      { name: t('cmdPerf'), description: 'Performance', action: async () => { await this.executeCommand('perf', ['status']); } },
+      { name: t('cmdInstall'), description: 'Install', action: async () => { await this.executeCommand('install'); } },
+      { name: t('cmdUpgrade'), description: 'Upgrade', action: async () => { await this.executeCommand('upgrade'); } },
+      { name: t('cmdExit'), description: 'Exit', action: async () => { this.stop(); } },
     ];
-
     this.commandBox.setItems(this.commands.map(c => c.name));
   }
 
   private async executeCommand(cmd: string, args: string[] = []): Promise<void> {
-    // 暂停刷新
     this.paused = true;
     if (this.refreshInterval) {
       clearInterval(this.refreshInterval);
       this.refreshInterval = null;
     }
     
-    // 销毁 blessed screen 释放终端
     this.screen.destroy();
     
-    // 清屏
     console.log('\x1b[2J\x1b[H');
     console.log(chalk.cyan(`\n▶ ${isEnglish() ? 'Executing' : '执行'}: openclaw-guard ${cmd} ${args.join(' ')}\n`));
     
     try {
       const execa = (await import('execa')).default;
-      const allArgs = [cmd, ...args];
-      await execa('node', ['dist/index.js', ...allArgs], { 
+      await execa('node', ['dist/index.js', cmd, ...args], { 
         stdio: 'inherit',
         cwd: process.cwd()
       });
     } catch (error: any) {
-      console.log(chalk.red(`\n${isEnglish() ? 'Error' : '错误'}: ${error.message}`));
+      console.log(chalk.red(`\n✗ ${isEnglish() ? 'Error' : '错误'}: ${error.message}`));
     }
     
-    // 等待用户确认
-    console.log(chalk.gray('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.gray('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
     console.log(chalk.cyan(t('pressEnter')));
     
     await this.waitForEnter();
     
-    // 重新启动 TUI
     this.paused = false;
     await this.start();
   }
@@ -440,17 +425,13 @@ class Dashboard {
   private waitForEnter(): Promise<void> {
     return new Promise((resolve) => {
       const stdin = process.stdin;
-      if (stdin.isTTY) {
-        stdin.setRawMode(true);
-      }
+      if (stdin.isTTY) stdin.setRawMode(true);
       stdin.resume();
       stdin.setEncoding('utf8');
       
       const handler = (key: string) => {
         if (key === '\r' || key === '\n' || key === '\u0003') {
-          if (stdin.isTTY) {
-            stdin.setRawMode(false);
-          }
+          if (stdin.isTTY) stdin.setRawMode(false);
           stdin.pause();
           stdin.removeListener('data', handler);
           resolve();
@@ -465,79 +446,165 @@ class Dashboard {
     if (this.paused) return;
     
     try {
-      // 刷新所有数据
       await Promise.allSettled([
         this.refreshStatus(),
+        this.refreshResources(),
+        this.refreshSecurity(),
         this.refreshAgents(),
         this.refreshDiagnostics(),
         this.refreshAlerts(),
       ]);
     } catch (error) {
-      // 静默处理，不阻塞刷新
+      // 静默处理
     }
     this.screen.render();
   }
 
   private async refreshStatus(): Promise<void> {
-    try {
-      const installed = await isOpenClawInstalled();
-      const version = await getOpenClawVersion();
-      const nodeCheck = await checkNodeVersion();
-      const gatewayRunning = await isGatewayRunning();
+    const installed = await isOpenClawInstalled();
+    const version = await getOpenClawVersion();
+    const nodeCheck = await checkNodeVersion();
+    const gatewayRunning = await isGatewayRunning();
 
-      const openclawIcon = installed ? '{green-fg}●{/green-fg}' : '{red-fg}○{/red-fg}';
-      const nodeIcon = nodeCheck.satisfied ? '{green-fg}●{/green-fg}' : '{red-fg}○{/red-fg}';
-      const gatewayIcon = gatewayRunning ? '{green-fg}●{/green-fg}' : '{red-fg}○{/red-fg}';
+    const ocIcon = installed ? `{${THEME.success}-fg}●{/${THEME.success}-fg}` : `{${THEME.danger}-fg}○{/${THEME.danger}-fg}`;
+    const nodeIcon = nodeCheck.satisfied ? `{${THEME.success}-fg}●{/${THEME.success}-fg}` : `{${THEME.warning}-fg}○{/${THEME.warning}-fg}`;
+    const gwIcon = gatewayRunning ? `{${THEME.success}-fg}●{/${THEME.success}-fg}` : `{${THEME.danger}-fg}○{/${THEME.danger}-fg}`;
 
-      const uptime = os.uptime();
-      const hours = Math.floor(uptime / 3600);
-      const minutes = Math.floor((uptime % 3600) / 60);
+    const uptime = os.uptime();
+    const h = Math.floor(uptime / 3600);
+    const m = Math.floor((uptime % 3600) / 60);
 
-      // 系统资源
-      const cpus = os.cpus();
-      const totalMem = os.totalmem();
-      const freeMem = os.freemem();
-      const usedMem = totalMem - freeMem;
-      const memPercent = Math.round((usedMem / totalMem) * 100);
+    const content = [
+      `  ${ocIcon} OpenClaw: {bold}${installed ? `v${version}` : t('notInstalled')}{/bold}    ${nodeIcon} Node.js: ${nodeCheck.satisfied ? `{${THEME.success}-fg}${nodeCheck.installed}{/${THEME.success}-fg}` : `{${THEME.warning}-fg}${nodeCheck.installed}{/${THEME.warning}-fg}`}    ${gwIcon} Gateway: ${gatewayRunning ? `{${THEME.success}-fg}${t('online')}{/${THEME.success}-fg}` : `{${THEME.danger}-fg}${t('offline')}{/${THEME.danger}-fg}`}`,
+      `  {${THEME.info}-fg}⌘{/} Host: {bold}${os.hostname()}{/bold}    {${THEME.info}-fg}⏱{/} Uptime: ${h}h ${m}m    {${THEME.info}-fg}📦{/} Platform: ${os.type()} ${os.release()}`,
+    ].join('\n');
 
-      let totalIdle = 0;
-      let totalTick = 0;
-      for (const cpu of cpus) {
-        for (const type in cpu.times) {
-          totalTick += (cpu.times as any)[type];
-        }
-        totalIdle += cpu.times.idle;
-      }
-
-      let cpuPercent = 0;
-      if (this.lastCpuInfo) {
-        const idleDiff = totalIdle - this.lastCpuInfo.idle;
-        const totalDiff = totalTick - this.lastCpuInfo.total;
-        if (totalDiff > 0) {
-          cpuPercent = Math.round(100 * (1 - idleDiff / totalDiff));
-        }
-      }
-      this.lastCpuInfo = { idle: totalIdle, total: totalTick };
-
-      const cpuColor = cpuPercent > 80 ? 'red' : cpuPercent > 50 ? 'yellow' : 'green';
-      const memColor = memPercent > 80 ? 'red' : memPercent > 50 ? 'yellow' : 'green';
-
-      const status = [
-        `  ${openclawIcon} OpenClaw: ${installed ? `{bold}v${version}{/bold}` : t('notInstalled')}    ${nodeIcon} Node.js: ${nodeCheck.satisfied ? nodeCheck.installed : `${nodeCheck.installed} (${isEnglish() ? 'need' : '需要'} >= ${nodeCheck.required})`}`,
-        `  ${gatewayIcon} ${t('gateway')}: ${gatewayRunning ? `{green-fg}${t('online')}{/green-fg}` : `{red-fg}${t('offline')}{/red-fg}`}    {cyan-fg}Host:{/cyan-fg} ${os.hostname()}    {cyan-fg}Uptime:{/cyan-fg} ${hours}${isEnglish() ? 'h' : '小时'} ${minutes}${isEnglish() ? 'm' : '分'}`,
-        `  {${cpuColor}-fg}CPU{/}: ${cpuPercent}%    {${memColor}-fg}MEM{/}: ${memPercent}%    {cyan-fg}Platform:{/cyan-fg} ${os.type()} ${os.release()}`,
-      ].join('\n');
-
-      this.statusBox.setContent(status);
-    } catch (error) {
-      this.statusBox.setContent(`{red-fg}${isEnglish() ? 'Error loading status' : '状态加载失败'}{/red-fg}`);
-    }
+    this.statusBox.setContent(content);
   }
 
-  private createProgressBar(percent: number, width: number): string {
+  private createSparkline(values: number[], width: number, color: string): string {
+    const chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    const max = Math.max(...values, 1);
+    
+    const result: string[] = [];
+    for (let i = Math.max(0, values.length - width); i < values.length; i++) {
+      const idx = Math.min(Math.floor((values[i] / max) * (chars.length - 1)), chars.length - 1);
+      result.push(`{${color}-fg}${chars[idx]}{/${color}-fg}`);
+    }
+    while (result.length < width) {
+      result.unshift(`{${THEME.muted}-fg}▁{/${THEME.muted}-fg}`);
+    }
+    return result.join('');
+  }
+
+  private createProgressBar(percent: number, width: number, color: string): string {
     const filled = Math.round((percent / 100) * width);
     const empty = width - filled;
-    return '█'.repeat(filled) + '░'.repeat(empty);
+    return `{${color}-fg}${'█'.repeat(filled)}{/${color}-fg}{${THEME.muted}-fg}${'░'.repeat(empty)}{/${THEME.muted}-fg}`;
+  }
+
+  private async refreshResources(): Promise<void> {
+    const cpus = os.cpus();
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const memPercent = Math.round((usedMem / totalMem) * 100);
+
+    let totalIdle = 0;
+    let totalTick = 0;
+    for (const cpu of cpus) {
+      for (const type in cpu.times) {
+        totalTick += (cpu.times as any)[type];
+      }
+      totalIdle += cpu.times.idle;
+    }
+
+    let cpuPercent = 0;
+    if (this.lastCpuInfo) {
+      const idleDiff = totalIdle - this.lastCpuInfo.idle;
+      const totalDiff = totalTick - this.lastCpuInfo.total;
+      if (totalDiff > 0) {
+        cpuPercent = Math.round(100 * (1 - idleDiff / totalDiff));
+      }
+    }
+    this.lastCpuInfo = { idle: totalIdle, total: totalTick };
+
+    // 记录历史
+    this.cpuHistory.push(cpuPercent);
+    this.memHistory.push(memPercent);
+    if (this.cpuHistory.length > 30) {
+      this.cpuHistory.shift();
+      this.memHistory.shift();
+    }
+
+    const cpuColor = cpuPercent > 80 ? THEME.danger : cpuPercent > 50 ? THEME.warning : THEME.success;
+    const memColor = memPercent > 80 ? THEME.danger : memPercent > 50 ? THEME.warning : THEME.success;
+
+    const content = [
+      '',
+      `  {${THEME.info}-fg}CPU{/}  ${this.createProgressBar(cpuPercent, 20, cpuColor)} {bold}${cpuPercent}%{/bold}`,
+      `       ${this.createSparkline(this.cpuHistory, 30, cpuColor)}`,
+      '',
+      `  {${THEME.info}-fg}MEM{/}  ${this.createProgressBar(memPercent, 20, memColor)} {bold}${memPercent}%{/bold}`,
+      `       ${this.createSparkline(this.memHistory, 30, memColor)}`,
+      '',
+      `  {${THEME.muted}-fg} cores: ${cpus.length} │ total: ${(totalMem / 1024 / 1024 / 1024).toFixed(1)}GB │ used: ${(usedMem / 1024 / 1024 / 1024).toFixed(1)}GB{/${THEME.muted}-fg}`,
+    ].join('\n');
+
+    this.resourceBox.setContent(content);
+  }
+
+  private async refreshSecurity(): Promise<void> {
+    const lines: string[] = [''];
+
+    // CVE 扫描
+    if (!this.lastCveResult || Date.now() - new Date(this.lastCveResult.lastChecked).getTime() > 60000) {
+      this.lastCveResult = await cveDatabase.scan();
+    }
+
+    const cveResult = this.lastCveResult;
+    
+    if (cveResult.openclawInstalled && cveResult.openclawVersion) {
+      if (cveResult.totalCVEs > 0) {
+        lines.push(`  {${THEME.danger}-fg}⚠ ${t('cve')}: ${cveResult.totalCVEs} ${t('vulnerabilities')}{/${THEME.danger}-fg}`);
+        
+        if (cveResult.criticalCount > 0) {
+          lines.push(`    {${THEME.danger}-fg}🚨 ${t('critical')}: ${cveResult.criticalCount}{/${THEME.danger}-fg}`);
+        }
+        if (cveResult.highCount > 0) {
+          lines.push(`    {${THEME.warning}-fg}▲ ${t('high')}: ${cveResult.highCount}{/${THEME.warning}-fg}`);
+        }
+        if (cveResult.exploitedCount > 0) {
+          lines.push(`    {${THEME.danger}-fg}⚡ ${t('exploited')}: ${cveResult.exploitedCount}{/${THEME.danger}-fg}`);
+        }
+      } else {
+        lines.push(`  {${THEME.success}-fg}${t('noVulns')}{/${THEME.success}-fg}`);
+      }
+    } else {
+      lines.push(`  {${THEME.muted}-fg}OpenClaw ${t('notInstalled')}{/${THEME.muted}-fg}`);
+    }
+
+    lines.push('');
+
+    // 合规性得分
+    if (this.lastComplianceScore === null) {
+      try {
+        const report = await complianceChecker.check({ minLevel: 'high' });
+        this.lastComplianceScore = report.score;
+      } catch {
+        this.lastComplianceScore = 0;
+      }
+    }
+
+    const score = this.lastComplianceScore;
+    const scoreColor = score >= 90 ? THEME.success : score >= 70 ? THEME.warning : THEME.danger;
+    const scoreIcon = score >= 90 ? '✓' : score >= 70 ? '!' : '✗';
+    
+    lines.push(`  {${THEME.info}-fg}${t('compliance')}{/${THEME.info}-fg}: {${scoreColor}-fg}{bold}${score}${t('score')}{/bold}{/${scoreColor}-fg} {${scoreColor}-fg}${scoreIcon}{/${scoreColor}-fg}`);
+    lines.push(`  ${this.createProgressBar(score, 24, scoreColor)}`);
+    lines.push('');
+
+    this.securityBox.setContent(lines.join('\n'));
   }
 
   private async refreshAgents(): Promise<void> {
@@ -551,53 +618,34 @@ class Dashboard {
       const defaults = config?.agents?.defaults;
       
       if (agents.length === 0) {
-        items.push(`{gray-fg}${t('noAgentsConfigured')}{/gray-fg}`);
+        items.push(`  {${THEME.muted}-fg}${t('noAgentsConfigured')}{/${THEME.muted}-fg}`);
         items.push('');
-        items.push('{cyan-fg}Run: openclaw-guard agent create{/cyan-fg}');
+        items.push(`  {${THEME.info}-fg}→ openclaw-guard agent create{/${THEME.info}-fg}`);
       } else {
         for (const agent of agents) {
-          const isDefault = agent.default ? ` {green-fg}${t('defaultAgent')}{/green-fg}` : '';
-          const icon = agent.default ? '{green-fg}●{/green-fg}' : '○';
-          items.push(`${icon} {bold}${agent.id}{/bold}${isDefault}`);
+          const isDefault = agent.default ? ` {${THEME.success}-fg}${t('defaultAgent')}{/${THEME.success}-fg}` : '';
+          const icon = agent.default ? `{${THEME.success}-fg}●{/${THEME.success}-fg}` : `○`;
+          items.push(`  ${icon} {bold}${agent.id}{/bold}${isDefault}`);
           
-          // 显示工作区
-          if (agent.workspace) {
-            const ws = agent.workspace.length > 20 
-              ? '...' + agent.workspace.slice(-17) 
-              : agent.workspace;
-            items.push(`  {gray-fg}${t('ws')}: ${ws}{/gray-fg}`);
-          }
-          
-          // 显示模型
           const primaryModel = defaults?.model?.primary;
           if (primaryModel) {
-            const modelShort = primaryModel.length > 18 
-              ? primaryModel.slice(0, 15) + '...' 
-              : primaryModel;
-            items.push(`  {cyan-fg}${t('model')}: ${modelShort}{/cyan-fg}`);
+            const m = primaryModel.length > 16 ? primaryModel.slice(0, 13) + '...' : primaryModel;
+            items.push(`    {${THEME.muted}-fg}${t('model')}: {${THEME.info}-fg}${m}{/${THEME.info}-fg}{/${THEME.muted}-fg}`);
           }
           
-          // 显示绑定数量
           const agentBindings = bindings.filter(b => b.agentId === agent.id);
           if (agentBindings.length > 0) {
             const channels = [...new Set(agentBindings.map(b => b.match.channel))];
-            items.push(`  {yellow-fg}${t('bindings')}: ${agentBindings.length} (${channels.join(', ')}){/yellow-fg}`);
+            items.push(`    {${THEME.muted}-fg}${t('bindings')}: {${THEME.warning}-fg}${agentBindings.length}{/${THEME.warning}-fg} ({${THEME.muted}-fg}${channels.slice(0, 2).join(', ')}{/${THEME.muted}-fg}){/${THEME.muted}-fg}`);
           }
           
-          // 显示提及模式
-          if (agent.groupChat?.mentionPatterns?.length) {
-            const patterns = agent.groupChat.mentionPatterns.slice(0, 2).join(', ');
-            const more = agent.groupChat.mentionPatterns.length > 2 ? '...' : '';
-            items.push(`  {gray-fg}${t('mentions')}: ${patterns}${more}{/gray-fg}`);
-          }
-          
-          items.push(''); // 空行分隔
+          items.push('');
         }
       }
     } else {
-      items.push(`{red-fg}✗ ${t('configNotFound')}{/red-fg}`);
+      items.push(`  {${THEME.danger}-fg}✗ ${t('configNotFound')}{/${THEME.danger}-fg}`);
       items.push('');
-      items.push('{cyan-fg}Run: openclaw-guard config init{/cyan-fg}');
+      items.push(`  {${THEME.info}-fg}→ openclaw-guard config init{/${THEME.info}-fg}`);
     }
 
     this.agentsBox.setItems(items);
@@ -607,28 +655,26 @@ class Dashboard {
     const data: string[][] = [];
     const hasConfig = await configExists();
 
-    const configIcon = hasConfig ? '✓' : '✗';
-    const configStatus = hasConfig ? t('ok') : t('missing');
-    data.push([`${configIcon} ${t('config')}`, configStatus, 
-      hasConfig ? '~/.openclaw/openclaw.json' : 'Run: openclaw-guard config init']);
+    const cfgIcon = hasConfig ? `{${THEME.success}-fg}✓{/${THEME.success}-fg}` : `{${THEME.danger}-fg}✗{/${THEME.danger}-fg}`;
+    const cfgStatus = hasConfig ? `{${THEME.success}-fg}${t('ok')}{/${THEME.success}-fg}` : `{${THEME.danger}-fg}${t('missing')}{/${THEME.danger}-fg}`;
+    data.push([`${cfgIcon} Config`, cfgStatus, hasConfig ? `~/.openclaw/openclaw.json` : 'Run: config init']);
 
     const gatewayRunning = await isGatewayRunning();
-    const gatewayIcon = gatewayRunning ? '✓' : '○';
-    const gatewayStatus = gatewayRunning ? t('running') : t('stopped');
-    data.push([`${gatewayIcon} ${t('gateway')}`, gatewayStatus,
-      gatewayRunning ? `${t('port')} 18789` : `${t('runCommand')} openclaw gateway`]);
+    const gwIcon = gatewayRunning ? `{${THEME.success}-fg}✓{/${THEME.success}-fg}` : `{${THEME.warning}-fg}○{/${THEME.warning}-fg}`;
+    const gwStatus = gatewayRunning ? `{${THEME.success}-fg}${t('running')}{/${THEME.success}-fg}` : `{${THEME.warning}-fg}${t('stopped')}{/${THEME.warning}-fg}`;
+    data.push([`${gwIcon} ${t('gateway')}`, gwStatus, gatewayRunning ? `Port 18789` : 'Run: openclaw gateway']);
 
     const openclawDir = getOpenClawDir();
     const dirs = ['logs', 'workspace', 'plugins', 'devices'];
     for (const dir of dirs) {
       const exists = await fs.pathExists(path.join(openclawDir, dir));
-      const icon = exists ? '✓' : '✗';
-      const status = exists ? t('ok') : t('missing');
+      const icon = exists ? `{${THEME.success}-fg}✓{/${THEME.success}-fg}` : `{${THEME.danger}-fg}✗{/${THEME.danger}-fg}`;
+      const status = exists ? `{${THEME.success}-fg}${t('ok')}{/${THEME.success}-fg}` : `{${THEME.danger}-fg}${t('missing')}{/${THEME.danger}-fg}`;
       data.push([`${icon} ${dir}`, status, '']);
     }
 
     this.table.setData({
-      headers: [isEnglish() ? 'Check' : '检查项', isEnglish() ? 'Status' : '状态', isEnglish() ? 'Info' : '信息'],
+      headers: [isEnglish() ? 'Check' : '检查项', isEnglish() ? 'Status' : '状态', isEnglish() ? 'Details' : '详情'],
       data,
     });
   }
@@ -640,16 +686,17 @@ class Dashboard {
     if (await fs.pathExists(alertLogPath)) {
       try {
         const content = await fs.readFile(alertLogPath, 'utf-8');
-        const lines = content.trim().split('\n').slice(-10).reverse();
+        const lines = content.trim().split('\n').slice(-8).reverse();
         
         for (const line of lines) {
           try {
             const alert = JSON.parse(line);
-            const time = new Date(alert.timestamp).toLocaleTimeString();
-            const icon = alert.level === 'critical' ? '{red-fg}[!]{/red-fg}' 
-                       : alert.level === 'high' ? '{yellow-fg}[*]{/yellow-fg}' 
-                       : '[-]';
-            items.push(`${icon} ${time} ${alert.rule?.name || (isEnglish() ? 'Unknown' : '未知')}`);
+            const time = new Date(alert.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            const icon = alert.level === 'critical' ? `{${THEME.danger}-fg}[!]{/${THEME.danger}-fg}` 
+                       : alert.level === 'high' ? `{${THEME.warning}-fg}[*]{/${THEME.warning}-fg}` 
+                       : `{${THEME.info}-fg}[-]{/${THEME.info}-fg}`;
+            const name = alert.rule?.name || (isEnglish() ? 'Unknown' : '未知');
+            items.push(`  ${icon} {${THEME.muted}-fg}${time}{/${THEME.muted}-fg} ${name}`);
           } catch {
             // ignore
           }
@@ -660,7 +707,7 @@ class Dashboard {
     }
 
     if (items.length === 0) {
-      items.push(`{gray-fg}${t('noRecentAlerts')}{/gray-fg}`);
+      items.push(`  {${THEME.success}-fg}${t('noRecentAlerts')}{/${THEME.success}-fg}`);
     }
 
     this.alertsBox.setItems(items);

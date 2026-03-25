@@ -3,8 +3,12 @@ import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs-extra';
 import path from 'path';
+import inquirer from 'inquirer';
 import { loadConfig, configExists, getOpenClawDir } from '../lib/config';
 import { SecurityIssue } from '../types';
+import { cveDatabase, CVEDatabase } from '../lib/cve-database';
+import { complianceChecker, ComplianceChecker, ComplianceStandard } from '../lib/compliance';
+import { PromptInjectionDetector } from '../monitor/prompt-injection';
 
 export function registerSecurityCommand(program: Command) {
   const securityCmd = program.command('security').description('Security audit and hardening');
@@ -12,8 +16,11 @@ export function registerSecurityCommand(program: Command) {
   // audit 子命令
   securityCmd
     .command('audit')
-    .description('Run security audit')
-    .action(async () => {
+    .description('Run comprehensive security audit')
+    .option('--cve', 'Include CVE vulnerability scan')
+    .option('--compliance', 'Include compliance check')
+    .option('--standard <standard>', 'Compliance standard (OWASP-LLM, ISO27001, SOC2, GDPR, PCI-DSS)')
+    .action(async (options) => {
       console.log(chalk.blue('🔒 OpenClaw Security Audit'));
       console.log();
 
@@ -158,8 +165,178 @@ export function registerSecurityCommand(program: Command) {
         }
       }
 
-      // 打印结果
+      // 打印基础审计结果
       printSecurityReport(issues);
+
+      // CVE 扫描
+      if (options.cve) {
+        console.log();
+        console.log(chalk.blue('🔍 CVE Vulnerability Scan'));
+        console.log();
+        
+        const spinner = ora('Scanning for known vulnerabilities...').start();
+        const cveResult = await cveDatabase.scan();
+        spinner.stop();
+        
+        console.log(cveDatabase.generateReport(cveResult));
+      }
+
+      // 合规性检查
+      if (options.compliance || options.standard) {
+        console.log();
+        console.log(chalk.blue('📋 Compliance Check'));
+        console.log();
+        
+        const standards: ComplianceStandard[] | undefined = options.standard 
+          ? [options.standard as ComplianceStandard]
+          : undefined;
+        
+        const spinner = ora('Running compliance checks...').start();
+        const complianceReport = await complianceChecker.check(standards ? { standards } : undefined);
+        spinner.stop();
+        
+        console.log(complianceChecker.generateReport(complianceReport));
+      }
+    });
+
+  // cve 子命令
+  securityCmd
+    .command('cve')
+    .description('Scan for known OpenClaw vulnerabilities')
+    .option('--detail', 'Show detailed CVE information')
+    .action(async (options) => {
+      console.log(chalk.blue('🔍 OpenClaw CVE Vulnerability Scan'));
+      console.log();
+
+      const spinner = ora('Scanning for known vulnerabilities...').start();
+      const result = await cveDatabase.scan();
+      spinner.stop();
+
+      console.log(cveDatabase.generateReport(result));
+
+      if (options.detail && result.vulnerabilities.length > 0) {
+        console.log();
+        console.log(chalk.bold('Detailed CVE Information:'));
+        console.log();
+
+        for (const cve of result.vulnerabilities) {
+          console.log(chalk.bold(`${cve.cveId} - ${cve.title}`));
+          console.log(chalk.gray('─'.repeat(60)));
+          console.log(`CVSS Score: ${cve.cvssScore}`);
+          console.log(`Severity: ${cve.severity.toUpperCase()}`);
+          console.log(`Category: ${cve.category}`);
+          console.log(`Published: ${cve.publishedDate}`);
+          console.log(`Exploited: ${cve.exploited ? chalk.red('Yes') : 'No'}`);
+          console.log();
+          console.log('Description:');
+          console.log(chalk.gray(cve.description));
+          console.log();
+          console.log(`Fixed Versions: ${cve.fixedVersions.join(', ')}`);
+          
+          if (cve.references.length > 0) {
+            console.log();
+            console.log('References:');
+            cve.references.forEach(ref => console.log(chalk.blue(`  ${ref}`)));
+          }
+          console.log();
+        }
+      }
+    });
+
+  // compliance 子命令
+  securityCmd
+    .command('compliance')
+    .description('Run compliance checks')
+    .option('--standard <standard>', 'Specific compliance standard (OWASP-LLM, ISO27001, SOC2, GDPR, PCI-DSS)')
+    .option('--category <category>', 'Specific category (authentication, encryption, access-control, logging, data-protection, network, configuration, agent-security)')
+    .option('--json', 'Output as JSON')
+    .action(async (options) => {
+      console.log(chalk.blue('📋 OpenClaw Compliance Check'));
+      console.log();
+
+      const checkOptions: any = {};
+      
+      if (options.standard) {
+        checkOptions.standards = [options.standard as ComplianceStandard];
+      }
+      
+      if (options.category) {
+        checkOptions.categories = [options.category];
+      }
+
+      const spinner = ora('Running compliance checks...').start();
+      const report = await complianceChecker.check(checkOptions);
+      spinner.stop();
+
+      if (options.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(complianceChecker.generateReport(report));
+      }
+    });
+
+  // injection 子命令
+  securityCmd
+    .command('injection')
+    .description('Test for prompt injection vulnerabilities')
+    .option('--text <text>', 'Text to analyze')
+    .option('--file <file>', 'File to analyze')
+    .action(async (options) => {
+      console.log(chalk.blue('🛡️  Prompt Injection Detection'));
+      console.log();
+
+      const detector = new PromptInjectionDetector();
+      let content = '';
+
+      if (options.text) {
+        content = options.text;
+      } else if (options.file) {
+        try {
+          content = await fs.readFile(options.file, 'utf-8');
+          console.log(chalk.gray(`Analyzing file: ${options.file}`));
+          console.log();
+        } catch (error) {
+          console.log(chalk.red(`Failed to read file: ${options.file}`));
+          return;
+        }
+      } else {
+        // 交互式输入
+        const answers = await inquirer.prompt([
+          {
+            type: 'editor',
+            name: 'content',
+            message: 'Enter text to analyze (opens editor):',
+          },
+        ]);
+        content = answers.content;
+      }
+
+      if (!content.trim()) {
+        console.log(chalk.yellow('No content to analyze'));
+        return;
+      }
+
+      // 执行检测
+      const spinner = ora('Analyzing for prompt injection patterns...').start();
+      const results = await detector.detect(content);
+      spinner.stop();
+
+      // 检测隐藏内容
+      const hiddenResults = await detector.detectHiddenInjection(content);
+
+      if (results.length === 0 && !hiddenResults.hasHiddenContent) {
+        console.log(chalk.green('✓ No prompt injection risks detected'));
+        return;
+      }
+
+      // 显示结果
+      console.log(detector.generateReport(results));
+
+      if (hiddenResults.hasHiddenContent) {
+        console.log();
+        console.log(chalk.yellow.bold('⚠️  Hidden Content Detected:'));
+        hiddenResults.findings.forEach(f => console.log(chalk.yellow(`  • ${f}`)));
+      }
     });
 
   // harden 子命令
@@ -198,8 +375,7 @@ export function registerSecurityCommand(program: Command) {
             console.log('2. Gateway authentication...');
             
             if (!options.yes) {
-              const inquirer = await import('inquirer');
-              const { enable } = await inquirer.default.prompt([
+              const { enable } = await inquirer.prompt([
                 {
                   type: 'confirm',
                   name: 'enable',
@@ -220,6 +396,35 @@ export function registerSecurityCommand(program: Command) {
             }
           }
         }
+      }
+
+      // 3. 运行合规性检查
+      console.log();
+      console.log('3. Running compliance check...');
+      const report = await complianceChecker.check({ minLevel: 'high' });
+      
+      if (report.failedChecks > 0) {
+        console.log(chalk.yellow(`  Found ${report.failedChecks} issues to address`));
+        
+        for (const result of report.results) {
+          if (!result.passed && result.remediation) {
+            console.log(chalk.gray(`  • ${result.ruleId}: ${result.remediation}`));
+          }
+        }
+      } else {
+        console.log(chalk.green('  ✓ All critical compliance checks passed'));
+      }
+
+      // 4. CVE 检查
+      console.log();
+      console.log('4. Checking for known vulnerabilities...');
+      const cveResult = await cveDatabase.scan();
+      
+      if (cveResult.vulnerabilities.length > 0) {
+        console.log(chalk.red(`  Found ${cveResult.totalCVEs} vulnerabilities!`));
+        console.log(chalk.gray(`  Run: openclaw upgrade`));
+      } else {
+        console.log(chalk.green('  ✓ No known vulnerabilities'));
       }
 
       console.log();
@@ -266,6 +471,69 @@ export function registerSecurityCommand(program: Command) {
       } else {
         console.log(chalk.green('✓ No obvious token exposures found'));
       }
+    });
+
+  // rules 子命令
+  securityCmd
+    .command('rules')
+    .description('List and manage security detection rules')
+    .option('--category <category>', 'Filter by category')
+    .option('--level <level>', 'Filter by risk level (critical, high, medium, low)')
+    .action(async (options) => {
+      const { DANGER_RULES, getRulesByLevel, getRulesByCategory } = await import('../monitor/rules');
+      
+      console.log(chalk.blue('📋 Security Detection Rules'));
+      console.log();
+
+      let rules = DANGER_RULES;
+
+      if (options.level) {
+        rules = getRulesByLevel(options.level);
+      }
+
+      if (options.category) {
+        rules = rules.filter(r => r.categories.includes(options.category));
+      }
+
+      console.log(`Total rules: ${rules.length}`);
+      console.log();
+
+      // 按严重程度分组
+      const critical = rules.filter(r => r.level === 'critical');
+      const high = rules.filter(r => r.level === 'high');
+      const medium = rules.filter(r => r.level === 'medium');
+      const low = rules.filter(r => r.level === 'low');
+
+      if (critical.length > 0) {
+        console.log(chalk.red.bold('🚨 Critical'));
+        critical.forEach(r => console.log(`  ${r.id}: ${r.name}`));
+        console.log();
+      }
+
+      if (high.length > 0) {
+        console.log(chalk.yellow.bold('🔴 High'));
+        high.forEach(r => console.log(`  ${r.id}: ${r.name}`));
+        console.log();
+      }
+
+      if (medium.length > 0) {
+        console.log(chalk.blue.bold('🟡 Medium'));
+        medium.forEach(r => console.log(`  ${r.id}: ${r.name}`));
+        console.log();
+      }
+
+      if (low.length > 0) {
+        console.log(chalk.gray.bold('🔵 Low'));
+        low.forEach(r => console.log(`  ${r.id}: ${r.name}`));
+        console.log();
+      }
+
+      // 显示统计
+      const categories = new Set<string>();
+      rules.forEach(r => r.categories.forEach(c => categories.add(c)));
+      
+      console.log(chalk.bold('Categories:'));
+      console.log(`  ${Array.from(categories).join(', ')}`);
     });
 }
 
