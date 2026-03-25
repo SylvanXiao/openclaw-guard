@@ -300,15 +300,31 @@ export function registerSecurityCommand(program: Command) {
           return;
         }
       } else {
-        // 交互式输入
+        // 交互式输入 - 使用 input 而非 editor
+        console.log(chalk.cyan('Enter text to analyze (or type a file path):'));
+        console.log(chalk.gray('Tip: Use --file option for longer content'));
+        console.log();
+        
         const answers = await inquirer.prompt([
           {
-            type: 'editor',
+            type: 'input',
             name: 'content',
-            message: 'Enter text to analyze (opens editor):',
+            message: 'Text or file path:',
           },
         ]);
-        content = answers.content;
+        
+        // 检查是否是文件路径
+        const inputPath = answers.content.trim();
+        if (await fs.pathExists(inputPath)) {
+          try {
+            content = await fs.readFile(inputPath, 'utf-8');
+            console.log(chalk.gray(`Loaded from file: ${inputPath}`));
+          } catch {
+            content = answers.content;
+          }
+        } else {
+          content = answers.content;
+        }
       }
 
       if (!content.trim()) {
