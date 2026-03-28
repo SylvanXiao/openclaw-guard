@@ -1,0 +1,102 @@
+{
+  "id": "openclaw-guard",
+  "name": "OpenClaw Guard",
+  "description": "OpenClaw 安全监控、诊断修复、知识库管理插件 - 提供实时安全监控、漏洞扫描、合规检查、自动修复等能力",
+  "version": "1.0.0",
+  "kind": "security",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "monitorEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "启用安全监控"
+      },
+      "monitorLevel": {
+        "type": "string",
+        "enum": ["critical", "high", "medium", "low"],
+        "default": "medium",
+        "description": "监控告警最低级别"
+      },
+      "webhookUrl": {
+        "type": "string",
+        "description": "告警 Webhook 地址"
+      },
+      "dingtalkWebhook": {
+        "type": "string",
+        "description": "钉钉机器人 Webhook"
+      },
+      "wecomWebhook": {
+        "type": "string",
+        "description": "企业微信机器人 Webhook"
+      },
+      "feishuWebhook": {
+        "type": "string",
+        "description": "飞书机器人 Webhook"
+      },
+      "knowledgeRemoteUrl": {
+        "type": "string",
+        "description": "远程知识库同步地址"
+      },
+      "knowledgeSyncInterval": {
+        "type": "number",
+        "default": 24,
+        "description": "知识库自动同步间隔（小时）"
+      },
+      "networkMonitoring": {
+        "type": "boolean",
+        "default": false,
+        "description": "启用网络连接监控"
+      },
+      "deviceMonitoring": {
+        "type": "boolean",
+        "default": false,
+        "description": "启用设备配对监控"
+      },
+      "gatewayPorts": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "default": [18789],
+        "description": "要监控的 Gateway 端口"
+      },
+      "autoFix": {
+        "type": "boolean",
+        "default": false,
+        "description": "启用自动修复"
+      },
+      "aiDiagnosis": {
+        "type": "boolean",
+        "default": false,
+        "description": "启用 AI 辅助诊断"
+      }
+    },
+    "additionalProperties": false
+  },
+  "skills": ["skills/security-guard"],
+  "uiHints": {
+    "fields": {
+      "webhookUrl": {
+        "label": "告警 Webhook",
+        "placeholder": "https://your-webhook-url/alert"
+      },
+      "dingtalkWebhook": {
+        "label": "钉钉告警",
+        "placeholder": "https://oapi.dingtalk.com/robot/send?access_token=..."
+      },
+      "wecomWebhook": {
+        "label": "企业微信告警",
+        "placeholder": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+      },
+      "feishuWebhook": {
+        "label": "飞书告警",
+        "placeholder": "https://open.feishu.cn/open-apis/bot/v2/hook/..."
+      },
+      "knowledgeRemoteUrl": {
+        "label": "知识库同步地址",
+        "placeholder": "https://your-server/knowledge.json"
+      }
+    }
+  }
+}

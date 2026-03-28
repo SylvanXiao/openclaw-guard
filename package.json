@@ -1,26 +1,59 @@
 {
-  "name": "openclaw-guard",
+  "name": "@openclaw/guard",
   "version": "1.0.0",
-  "description": "OpenClaw security monitoring, operations, and management CLI tool",
-  "main": "dist/index.js",
+  "description": "OpenClaw security monitoring, diagnostics, and knowledge management plugin",
+  "main": "dist/plugin.js",
+  "types": "dist/plugin.d.ts",
   "bin": {
     "openclaw-guard": "./dist/index.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/plugin.d.ts",
+      "import": "./dist/plugin.js",
+      "require": "./dist/plugin.js"
+    },
+    "./cli": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "skills"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "openclaw",
-    "cli",
+    "plugin",
     "guard",
     "security",
     "monitor",
-    "ops"
+    "diagnostics",
+    "cve",
+    "compliance"
   ],
-  "author": "",
+  "author": "SylvanXiao",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SylvanXiao/openclaw-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SylvanXiao/openclaw-guard/issues"
+  },
+  "homepage": "https://github.com/SylvanXiao/openclaw-guard#readme",
+  "peerDependencies": {
+    "openclaw": ">=2026.0.0"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "@types/blessed": "^0.1.27",
     "@types/tar": "^6.1.13",
