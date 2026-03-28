@@ -1,5 +1,5 @@
 {
-  "name": "@openclaw/guard",
+  "name": "openclaw-guard",
   "version": "1.0.0",
   "description": "OpenClaw security monitoring, diagnostics, and knowledge management plugin",
   "main": "dist/plugin.js",
@@ -14,6 +14,12 @@
       "require": "./dist/plugin.js"
     },
     "./cli": "./dist/index.js"
+  },
+  "openclaw": {
+    "extensions": ["./dist/plugin.js"],
+    "compat": {
+      "pluginApi": ">=2026.0.0"
+    }
   },
   "files": [
     "dist",
