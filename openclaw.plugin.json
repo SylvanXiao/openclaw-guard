@@ -2,8 +2,53 @@
   "id": "openclaw-guard",
   "name": "OpenClaw Guard",
   "description": "OpenClaw 安全监控、诊断修复、知识库管理插件 - 提供实时安全监控、漏洞扫描、合规检查、自动修复等能力",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "kind": "security",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g openclaw-guard",
+    "buildCommand": "npm run build",
+    "requirements": {
+      "node": ">=18.0.0",
+      "npm": ">=9.0.0"
+    }
+  },
+  "permissions": {
+    "filesystem": {
+      "read": ["~/.openclaw", "~/.openclaw-guard", "/etc/openclaw"],
+      "write": ["~/.openclaw", "~/.openclaw-guard"]
+    },
+    "network": {
+      "outbound": true,
+      "description": "用于知识库同步、告警推送、AI 辅助诊断"
+    },
+    "process": {
+      "spawn": true,
+      "daemon": true,
+      "description": "用于监控守护进程和系统诊断命令执行"
+    }
+  },
+  "env": {
+    "optional": [
+      {
+        "name": "OPENCLAW_GUARD_AI_API_KEY",
+        "description": "AI 辅助诊断的 API Key（可选）"
+      },
+      {
+        "name": "OPENCLAW_GUARD_AI_ENDPOINT",
+        "description": "AI 辅助诊断的 API 端点（可选）"
+      }
+    ]
+  },
+  "security": {
+    "dataHandling": {
+      "localOnly": ["配置文件", "诊断日志", "备份文件"],
+      "externalTransmit": ["告警通知", "知识库同步", "AI 诊断请求"],
+      "credentialStorage": "本地 JSON 文件，未加密"
+    },
+    "auditLog": true,
+    "userConsent": ["首次配置告警渠道时", "首次配置远程知识库时", "启用自动修复时"]
+  },
   "configSchema": {
     "type": "object",
     "properties": {
