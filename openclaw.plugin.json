@@ -2,7 +2,7 @@
   "id": "openclaw-guard",
   "name": "OpenClaw Guard",
   "description": "OpenClaw 安全监控、诊断修复、知识库管理插件 - 提供实时安全监控、漏洞扫描、合规检查、自动修复等能力",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "kind": "security",
   "install": {
     "method": "npm",
@@ -47,7 +47,8 @@
       "credentialStorage": "本地 JSON 文件，未加密"
     },
     "auditLog": true,
-    "userConsent": ["首次配置告警渠道时", "首次配置远程知识库时", "启用自动修复时"]
+    "userConsent": ["首次配置告警渠道时", "首次配置远程知识库时", "启用自动修复时"],
+    "sourceCodeWarning": "源代码包含安全检测模式（如 prompt-injection 正则表达式），用于检测恶意输入，非恶意代码。扫描器可能将这些模式误判为可疑内容。"
   },
   "configSchema": {
     "type": "object",
